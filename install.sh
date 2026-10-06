@@ -3,7 +3,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
 PROFILE_ROOT="$HOME/.mozilla/firefox"
 
 echo "Zen-style Firefox New Tab installer"
@@ -15,18 +14,58 @@ if [[ ! -d "$PROFILE_ROOT" ]]; then
     exit 1
 fi
 
+find_firefox_install() {
+    local candidates=(
+        "/usr/lib/firefox"
+        "/usr/lib64/firefox"
+        "/opt/firefox"
+        "/usr/local/lib/firefox"
+    )
+
+    for dir in "${candidates[@]}"; do
+        if [[ -f "$dir/config.js" && -x "$dir/firefox" ]]; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+FIREFOX_INSTALL=""
+
+if FIREFOX_INSTALL="$(find_firefox_install)"; then
+    echo "Detected Firefox installation:"
+    echo "  $FIREFOX_INSTALL"
+else
+    echo "Could not automatically detect the Firefox installation."
+    echo
+    echo "This feature requires fx-autoconfig to already be installed."
+    echo
+
+    read -r -p "Firefox installation directory: " FIREFOX_INSTALL
+
+    if [[ ! -f "$FIREFOX_INSTALL/config.js" ]]; then
+        echo
+        echo "config.js was not found in:"
+        echo "  $FIREFOX_INSTALL"
+        echo
+        echo "Make sure fx-autoconfig is installed correctly."
+        exit 1
+    fi
+fi
+
 mapfile -t PROFILES < <(
-    find "$PROFILE_ROOT" -mindepth 1 -maxdepth 1 -type d \
-        \( -name '*.default-release' -o -name '*.default-release-*' \) \
+    find "$PROFILE_ROOT" \
+        -mindepth 1 \
+        -maxdepth 1 \
+        -type d \
+        -exec test -f '{}/prefs.js' \; \
         -print | sort
 )
 
 if (( ${#PROFILES[@]} == 0 )); then
-    echo "No Firefox default-release profiles found."
-    echo
-    echo "Run this script with an explicit profile path:"
-    echo
-    echo "  ./install.sh /path/to/firefox/profile"
+    echo "No Firefox profiles found."
     exit 1
 fi
 
@@ -35,11 +74,14 @@ PROFILE=""
 if [[ $# -ge 1 ]]; then
     PROFILE="$1"
 else
+    echo
     echo "Firefox profiles found:"
     echo
 
     for i in "${!PROFILES[@]}"; do
-        printf '%d. %s\n' "$((i + 1))" "${PROFILES[$i]}"
+        printf '%d. %s\n' \
+            "$((i + 1))" \
+            "${PROFILES[$i]}"
     done
 
     echo
@@ -60,19 +102,12 @@ if [[ ! -d "$PROFILE" ]]; then
     exit 1
 fi
 
-if [[ ! -f /usr/lib/firefox/config.js ]]; then
-    echo "fx-autoconfig does not appear to be installed."
-    echo
-    echo "Install fx-autoconfig first:"
-    echo "  https://github.com/MrOtherGuy/fx-autoconfig"
-    exit 1
-fi
-
 if [[ ! -f "$PROFILE/chrome/utils/boot.sys.mjs" ]]; then
-    echo "fx-autoconfig is not installed in this profile:"
+    echo
+    echo "fx-autoconfig is not installed in this Firefox profile:"
     echo "  $PROFILE"
     echo
-    echo "Install the fx-autoconfig profile files first."
+    echo "Install fx-autoconfig into this profile first."
     exit 1
 fi
 
@@ -87,13 +122,13 @@ cp "$SCRIPT_DIR/CSS/zen-newtab.uc.css" \
    "$PROFILE/chrome/CSS/zen-newtab.uc.css"
 
 echo
-echo "Installed successfully."
+echo "Installation complete."
 echo
 echo "Profile:"
 echo "  $PROFILE"
 echo
-echo "Files:"
+echo "Installed:"
 echo "  chrome/JS/replace-new-tab.uc.js"
 echo "  chrome/CSS/zen-newtab.uc.css"
 echo
-echo "Clear Firefox's startup cache via about:support, then restart Firefox."
+echo "Clear Firefox's startup cache in about:support and restart Firefox."
