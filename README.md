@@ -16,9 +16,9 @@ The feature consists of two independent files:
 * `CSS/zen-newtab.uc.css` — handles the centered URL bar.
 
 ## Requirements
-
+* Before installing this project, install fx-autoconfig by following its installation instructions:
+https://github.com/MrOtherGuy/fx-autoconfig#install
 * Firefox
-* [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig)
 * A Firefox profile with `userChromeJS.enabled` set to `true`
 
 `fx-autoconfig` is required because Firefox does not load privileged user scripts by itself.
@@ -28,7 +28,7 @@ The feature consists of two independent files:
 Clone the repository:
 
 ```
-git clone https://github.com/YOUR_USERNAME/zen-firefox-newtab.git
+git clone https://github.com/constantinemagnus/zen-firefox-newtab.git
 cd zen-firefox-newtab
 ```
 
@@ -89,10 +89,10 @@ to:
 Then clear Firefox's startup cache and restart Firefox.
 
 ## Compatibility
+Tested on Firefox 157.0 (Linux).
 
 The JavaScript uses Firefox's privileged browser UI APIs to modify the new-tab command and URL-bar behavior.
 
 Because Firefox's internal browser UI can change between versions, a future Firefox update may require adjustments to the JavaScript.
 
-The CSS and JavaScript are kept separate so they can be modified independently.
-
+The included installer currently supports Linux. Windows and macOS users can use the manual installation instructions.
