@@ -1,0 +1,142 @@
+/* Zen-style centered URL bar
+ * Independent of FlexFox preferences.
+ */
+
+/*
+ * Firefox 157+ keeps #urlbar in the toolbar but allows its
+ * background/input elements to be positioned independently.
+ */
+
+#urlbar-container {
+    anchor-name: --constantine-urlbar-container-anchor;
+    container-type: inline-size;
+}
+
+#urlbar:not([popover]) {
+    contain: none !important;
+
+    /* NORMAL / DEFAULT POSITION */
+    --constantine-urlbar-height: var(--urlbar-height);
+    --constantine-urlbar-left: anchor(left);
+    --constantine-urlbar-width: 100cqi;
+    --constantine-urlbar-margin-top: 0px;
+}
+
+#urlbar:not([popover]) > :where(
+    #urlbar-background,
+    .urlbar-background,
+    .urlbar-input-container
+) {
+    position: fixed !important;
+    position-anchor: --constantine-urlbar-container-anchor;
+
+    inset: auto !important;
+
+    top: calc(
+        anchor(top) +
+        (anchor-size(height) - var(--constantine-urlbar-height)) / 2
+    ) !important;
+
+    left: var(--constantine-urlbar-left) !important;
+    width: var(--constantine-urlbar-width) !important;
+    height: var(--constantine-urlbar-height) !important;
+
+    margin: 0 !important;
+    margin-top: var(--constantine-urlbar-margin-top) !important;
+
+    transition:
+        box-shadow 0.3s ease-out,
+        left 0.3s ease,
+        width 0.3s ease,
+        margin-top 0.3s ease !important;
+}
+
+/*
+ * CENTERED STATE
+ *
+ * This replaces FlexFox's
+ * uc.flex.move-urlbar-popup-to-center = 1
+ */
+
+#urlbar[focused][usertyping],
+#urlbar[popover-open] {
+    --constantine-urlbar-height: 50px;
+    --constantine-urlbar-left: 28vw;
+    --constantine-urlbar-width: 44vw;
+    --constantine-urlbar-margin-top: 20vh;
+}
+
+/*
+ * Firefox's popup background extends slightly beyond the
+ * actual input container.
+ */
+
+#urlbar[popover-open] > :where(
+    #urlbar-background,
+    .urlbar-background
+) {
+    top: calc(
+        anchor(top) +
+        (anchor-size(height) - var(--constantine-urlbar-height)) / 2 -
+        var(--urlbar-background-overhang-open, 8px)
+    ) !important;
+
+    left: calc(
+        var(--constantine-urlbar-left) -
+        var(--urlbar-background-overhang-open, 8px)
+    ) !important;
+
+    width: calc(
+        var(--constantine-urlbar-width) +
+        2 * var(--urlbar-background-overhang-open, 8px)
+    ) !important;
+
+    height: calc(
+        var(--constantine-urlbar-height) +
+        var(--urlbar-background-overhang-open, 8px) +
+        var(--urlbar-joint-background-overlap, 24px)
+    ) !important;
+}
+
+/*
+ * Keep the centered URL bar visible above the page.
+ */
+
+#navigator-toolbox:has(
+    #urlbar[popover-open],
+    #urlbar:not([popover])[focused][usertyping]
+) {
+    --browser-area-z-index-toolbox: 5 !important;
+}
+
+#main-window #nav-bar:has(
+    #urlbar[popover-open],
+    #urlbar:not([popover])[focused][usertyping]
+),
+#main-window #navigator-toolbox:has(
+    #urlbar[popover-open],
+    #urlbar:not([popover])[focused][usertyping]
+) {
+    transform: none !important;
+    transition: none !important;
+}
+
+/*
+ * Enlarged centered input.
+ */
+
+#urlbar:is(
+    [popover-open],
+    [focused][usertyping]
+) > .urlbar-input-container {
+    height: 50px !important;
+    padding-inline: 15px !important;
+}
+
+/*
+ * Keep the URL-bar results aligned with the centered input.
+ */
+
+#urlbar[popover-open] > .urlbarView:popover-open {
+    --urlbarView-margin-block: 4px;
+}
