@@ -2,7 +2,7 @@
 # Shared helpers for install.sh, update.sh and uninstall.sh.
 # Source this file; don't run it directly.
 
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/zen-firefox-newtab"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/firefox-floating-urlbar"
 SAVED_PROFILE_FILE="$CONFIG_DIR/profile"
 
 die()  { echo "Error: $*" >&2; exit 1; }

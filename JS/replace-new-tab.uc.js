@@ -27,19 +27,19 @@
  *   neither does it logs a warning and leaves Firefox's Ctrl+T untouched.
  *
  * Preferences (about:config, optional)
- *   uc.zennewtab.enabled   (bool, default true)   false = Firefox's normal new tab.
- *   uc.zennewtab.debug     (bool, default false)  Log to the Browser Console (Ctrl+Shift+J).
+ *   uc.floatingurlbar.enabled   (bool, default true)   false = Firefox's normal new tab.
+ *   uc.floatingurlbar.debug     (bool, default false)  Log to the Browser Console (Ctrl+Shift+J).
  */
 
 (() => {
     "use strict";
 
- const PREF_ENABLED = "uc.zennewtab.enabled";
- const PREF_DEBUG = "uc.zennewtab.debug";
+ const PREF_ENABLED = "uc.floatingurlbar.enabled";
+ const PREF_DEBUG = "uc.floatingurlbar.debug";
 
  // Older versions of this script overrode browser.urlbar.openintab and kept a
  // backup here. Restore it once if a previous session left it behind.
- const LEGACY_PREF_SAVED = "uc.zennewtab.saved-openintab";
+ const LEGACY_PREF_SAVED = "uc.floatingurlbar.saved-openintab";
  const PREF_OPENINTAB = "browser.urlbar.openintab";
 
  const commandId = "constantineReplaceNewTab";

@@ -89,7 +89,7 @@ Uninstalled. Reopen Firefox; if the old behaviour persists, clear the startup
 cache in about:support.
 
 Optional cleanup in about:config:
-  - Reset any uc.zennewtab.* preferences you created.
+  - Reset any uc.floatingurlbar.* preferences you created.
   - If you ran an older version of this script, check browser.urlbar.openintab.
     Reset it if you never set it yourself.
 NOTES

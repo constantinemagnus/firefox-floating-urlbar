@@ -82,7 +82,7 @@ Notes:
     File > New Tab still open a normal blank tab.
   - If you have other CSS that changes URL bar behaviour (floating/centred URL
     bar mods, theme packs), disable it so the two don't fight.
-  - Switch the feature off without uninstalling: set uc.zennewtab.enabled to false.
+  - Switch the feature off without uninstalling: set uc.floatingurlbar.enabled to false.
   - If you ran an older version of this script, check that browser.urlbar.openintab
     in about:config is what you expect (reset it if you never set it).
   - To remove everything: ./uninstall.sh

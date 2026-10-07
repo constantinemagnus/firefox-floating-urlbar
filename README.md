@@ -1,4 +1,4 @@
-# zen-firefox-newtab
+# firefox-floating-urlbar
 
 Zen Browser's new-tab behaviour for regular Firefox: press **Ctrl+T**, the address bar pops up in the centre of the window, type a URL or a search, press **Enter**, and it opens in a **new tab**. **Escape** cancels.
 
@@ -7,7 +7,7 @@ It is a small [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user 
 ## Demo
 
 <p align="center">
-  <img src="assets/demo.gif" alt="zen-firefox-newtab demo" width="800">
+  <img src="assets/demo.gif" alt="firefox-floating-urlbar demo" width="800">
 </p>
 
 ## Behaviour
@@ -32,8 +32,8 @@ It is a small [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user 
 ### Linux (installer script)
 
 ```bash
-git clone https://github.com/constantinemagnus/zen-firefox-newtab.git
-cd zen-firefox-newtab
+git clone https://github.com/constantinemagnus/firefox-floating-urlbar.git
+cd firefox-floating-urlbar
 ./install.sh
 ```
 
@@ -67,8 +67,8 @@ Removes the two files (keeping a backup of any you edited) and never touches Fir
 
 | Preference | Default | Meaning |
 | --- | --- | --- |
-| `uc.zennewtab.enabled` | `true` | Set to `false` to get Firefox's normal Ctrl+T back without uninstalling |
-| `uc.zennewtab.debug` | `false` | Log what the script is doing to the Browser Console (Ctrl+Shift+J) |
+| `uc.floatingurlbar.enabled` | `true` | Set to `false` to get Firefox's normal Ctrl+T back without uninstalling |
+| `uc.floatingurlbar.debug` | `false` | Log what the script is doing to the Browser Console (Ctrl+Shift+J) |
 
 ## Other URL bar tweaks
 
@@ -83,9 +83,9 @@ That method is internal to Firefox, and Mozilla is moving it (`UrlbarInput._wher
 ## Troubleshooting
 
 - **Nothing changed after installing.** Clear the startup cache (`about:support` → *Clear startup cache*) and restart Firefox. Also confirm fx-autoconfig works by checking that other `.uc.js` scripts load.
-- **Ctrl+T behaves like normal Firefox.** Set `uc.zennewtab.debug` to `true` in `about:config`, restart, and open the Browser Console (Ctrl+Shift+J). A working install logs `[Replace New Tab] wrapped whereToOpen` (newer Firefox, including 157) or `wrapped _whereToOpen` (older Firefox), followed by `loaded`. Other messages in the console (Region, TopSites, Glean, experiments) come from Firefox itself and can be ignored. If you see a warning that Firefox exposes neither `gURLBar._whereToOpen` nor `gURLBar.controller.whereToOpen`, your Firefox has moved that method again; please open an issue with your Firefox version and the console output.
+- **Ctrl+T behaves like normal Firefox.** Set `uc.floatingurlbar.debug` to `true` in `about:config`, restart, and open the Browser Console (Ctrl+Shift+J). A working install logs `[Replace New Tab] wrapped whereToOpen` (newer Firefox, including 157) or `wrapped _whereToOpen` (older Firefox), followed by `loaded`. Other messages in the console (Region, TopSites, Glean, experiments) come from Firefox itself and can be ignored. If you see a warning that Firefox exposes neither `gURLBar._whereToOpen` nor `gURLBar.controller.whereToOpen`, your Firefox has moved that method again; please open an issue with your Firefox version and the console output.
 - **The bar opens but isn't centred.** Firefox changed its URL bar markup. The selectors the stylesheet depends on are listed at the top of `CSS/zen-newtab.uc.css`. Please open an issue with your Firefox version.
-- **Enter opens in the current tab.** Turn on `uc.zennewtab.debug` and include the console output in an issue.
+- **Enter opens in the current tab.** Turn on `uc.floatingurlbar.debug` and include the console output in an issue.
 
 ## License and attribution
 
