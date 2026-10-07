@@ -33,7 +33,7 @@ while (( $# > 0 )); do
     esac
 done
 
-echo "Zen-style Firefox New Tab installer"
+echo "Firefox Floating URL Bar installer"
 echo
 
 if [[ -z "$PROFILE" ]]; then
@@ -78,8 +78,9 @@ fi
 cat <<NOTES
 
 Notes:
-  - Ctrl+T (Cmd+T on macOS) opens the centred URL bar. The + button and
-    File > New Tab still open a normal blank tab.
+  - Ctrl+T (Cmd+T on macOS) opens the centred URL bar and submits the result
+    in a new tab. Ctrl+L still navigates in the current tab as normal. The +
+    button and File > New Tab remain unchanged.
   - If you have other CSS that changes URL bar behaviour (floating/centred URL
     bar mods, theme packs), disable it so the two don't fight.
   - Switch the feature off without uninstalling: set uc.floatingurlbar.enabled to false.
