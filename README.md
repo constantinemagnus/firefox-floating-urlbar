@@ -1,8 +1,8 @@
 # firefox-floating-urlbar
 
-Zen Browser's new-tab behaviour for regular Firefox: press **Ctrl+T**, the address bar pops up in the centre of the window, type a URL or a search, press **Enter**, and it opens in a **new tab**. **Escape** cancels.
+A Zen-style floating URL bar for Firefox. Press **Ctrl+T**, type a URL or search, and press **Enter** to open it directly in a **new tab** — without leaving a blank tab in between. **Ctrl+L** also uses the floating URL bar while keeping Firefox's normal current-tab navigation.
 
-It is a small [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user script plus a stylesheet. It does not replace your theme and does not install an extension.
+It is a small [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user script plus a stylesheet. It does not replace your theme or require an extension.
 
 ## Demo
 

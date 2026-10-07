@@ -1,27 +1,32 @@
-/* Zen-style centered URL bar
+/*
+ * Zen-style centered URL bar
  *
- * If you have other CSS that positions or resizes the URL bar (floating or
- * centred URL bar mods, theme packs, custom #urlbar rules), disable it so the
- * two don't fight.
- *
- * Requirements and fragility
- *   - Needs CSS anchor positioning (anchor-name, position-anchor, anchor()).
- *     Everything below sits inside an @supports block, so on a Firefox without
- *     it this stylesheet does nothing and the URL bar keeps its normal position.
- *   - Depends on Firefox's current URL bar markup: #urlbar, #urlbar-background,
- *     .urlbar-background, .urlbar-input-container, .urlbarView, and the
- *     [popover], [popover-open], [focused] and [usertyping] attributes. Firefox
- *     can change these between versions. If the bar stops centering after an
- *     update, check these selectors first.
- *
- * The bar floats whenever it is focused and being typed in (Ctrl+T, Ctrl+L, or
- * clicking it).
- *
- *  * The centered URL-bar CSS is adapted from FlexFox
- * (MIT License), particularly:
+ * Adapted from FlexFox:
  * https://github.com/yuuqilin/FlexFox/blob/main/chrome/components/uc-urlbar.css
  *
- * See ATTRIBUTION.md for the full attribution and license notice.
+ * Copyright (c) 2024 Christol Yu, Ravindu Liyanapathirana, and yuuqilin
+ *
+ * MIT License
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ *
+ * See ATTRIBUTION.md for additional attribution information.
  */
 
 @supports (anchor-name: --a) {
