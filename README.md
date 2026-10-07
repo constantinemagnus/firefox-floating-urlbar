@@ -44,7 +44,7 @@ The included installer currently supports Linux. Windows and macOS users can use
 ### Manual (any OS)
 
 1. Copy `JS/replace-new-tab.uc.js` into your profile's `chrome/JS/` folder.
-2. Copy `CSS/zen-newtab.uc.css` into your profile's `chrome/CSS/` folder.
+2. Copy `CSS/firefox-floating-urlbar.uc.css` into your profile's `chrome/CSS/` folder.
 3. Close Firefox, open it again, then go to `about:support` and click **Clear startup cache**, and restart once more.
 
 ## Update
@@ -84,7 +84,7 @@ That method is internal to Firefox, and Mozilla is moving it (`UrlbarInput._wher
 
 - **Nothing changed after installing.** Clear the startup cache (`about:support` → *Clear startup cache*) and restart Firefox. Also confirm fx-autoconfig works by checking that other `.uc.js` scripts load.
 - **Ctrl+T behaves like normal Firefox.** Set `uc.floatingurlbar.debug` to `true` in `about:config`, restart, and open the Browser Console (Ctrl+Shift+J). A working install logs `[Replace New Tab] wrapped whereToOpen` (newer Firefox, including 157) or `wrapped _whereToOpen` (older Firefox), followed by `loaded`. Other messages in the console (Region, TopSites, Glean, experiments) come from Firefox itself and can be ignored. If you see a warning that Firefox exposes neither `gURLBar._whereToOpen` nor `gURLBar.controller.whereToOpen`, your Firefox has moved that method again; please open an issue with your Firefox version and the console output.
-- **The bar opens but isn't centred.** Firefox changed its URL bar markup. The selectors the stylesheet depends on are listed at the top of `CSS/zen-newtab.uc.css`. Please open an issue with your Firefox version.
+- **The bar opens but isn't centred.** Firefox changed its URL bar markup. The selectors the stylesheet depends on are listed at the top of `CSS/firefox-floating-urlbar.uc.css`. Please open an issue with your Firefox version.
 - **Enter opens in the current tab.** Turn on `uc.floatingurlbar.debug` and include the console output in an issue.
 
 ## License and attribution

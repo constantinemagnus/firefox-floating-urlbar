@@ -60,7 +60,7 @@ mkdir -p "$PROFILE/chrome/JS" "$PROFILE/chrome/CSS"
 echo
 echo "Installing:"
 copy_with_backup "$SCRIPT_DIR/JS/replace-new-tab.uc.js" "$PROFILE/chrome/JS/replace-new-tab.uc.js"
-copy_with_backup "$SCRIPT_DIR/CSS/zen-newtab.uc.css"    "$PROFILE/chrome/CSS/zen-newtab.uc.css"
+copy_with_backup "$SCRIPT_DIR/CSS/firefox-floating-urlbar.uc.css"    "$PROFILE/chrome/CSS/firefox-floating-urlbar.uc.css"
 
 save_profile "$PROFILE"
 

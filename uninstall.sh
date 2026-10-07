@@ -74,7 +74,7 @@ remove_installed() {
 }
 
 remove_installed "$PROFILE/chrome/JS/replace-new-tab.uc.js" "$SCRIPT_DIR/JS/replace-new-tab.uc.js"
-remove_installed "$PROFILE/chrome/CSS/zen-newtab.uc.css"    "$SCRIPT_DIR/CSS/zen-newtab.uc.css"
+remove_installed "$PROFILE/chrome/CSS/firefox-floating-urlbar.uc.css"    "$SCRIPT_DIR/CSS/firefox-floating-urlbar.uc.css"
 
 if (( RUNNING == 0 )); then
     echo
