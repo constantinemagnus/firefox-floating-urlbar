@@ -3,132 +3,87 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROFILE_ROOT="$HOME/.mozilla/firefox"
+# shellcheck source=lib.sh
+source "$SCRIPT_DIR/lib.sh"
+
+usage() {
+    cat <<USAGE
+Usage: ./install.sh [options] [PROFILE_DIR]
+
+Tested on Linux. Windows and macOS users: see the manual install steps in the README.
+
+Options:
+  -p, --profile DIR   Install into this profile folder (skips the prompt)
+      --root DIR      Firefox profile root (folder containing profiles.ini)
+  -h, --help          Show this help
+
+PROFILE_DIR as a bare argument is also accepted.
+USAGE
+}
+
+PROFILE=""
+
+while (( $# > 0 )); do
+    case "$1" in
+        -p|--profile) [[ $# -ge 2 ]] || die "$1 needs a value"; PROFILE="$2"; shift 2 ;;
+        --root)       [[ $# -ge 2 ]] || die "$1 needs a value"; PROFILE_ROOT="$2"; shift 2 ;;
+        -h|--help)    usage; exit 0 ;;
+        -*)           die "Unknown option: $1 (see --help)" ;;
+        *)            PROFILE="$1"; shift ;;
+    esac
+done
 
 echo "Zen-style Firefox New Tab installer"
 echo
 
-if [[ ! -d "$PROFILE_ROOT" ]]; then
-    echo "Firefox profile directory not found:"
-    echo "  $PROFILE_ROOT"
-    exit 1
-fi
+if [[ -z "$PROFILE" ]]; then
+    PROFILE_ROOT="$(find_profile_root)" || die "Could not find a Firefox profile folder. Use --root DIR or --profile DIR."
+    echo "Profile folder: $PROFILE_ROOT"
 
-find_firefox_install() {
-    local candidates=(
-        "/usr/lib/firefox"
-        "/usr/lib64/firefox"
-        "/opt/firefox"
-        "/usr/local/lib/firefox"
-    )
-
-    for dir in "${candidates[@]}"; do
-        if [[ -f "$dir/config.js" && -x "$dir/firefox" ]]; then
-            printf '%s\n' "$dir"
-            return 0
-        fi
-    done
-
-    return 1
-}
-
-FIREFOX_INSTALL=""
-
-if FIREFOX_INSTALL="$(find_firefox_install)"; then
-    echo "Detected Firefox installation:"
-    echo "  $FIREFOX_INSTALL"
-else
-    echo "Could not automatically detect the Firefox installation."
-    echo
-    echo "This feature requires fx-autoconfig to already be installed."
-    echo
-
-    read -r -p "Firefox installation directory: " FIREFOX_INSTALL
-
-    if [[ ! -f "$FIREFOX_INSTALL/config.js" ]]; then
-        echo
-        echo "config.js was not found in:"
-        echo "  $FIREFOX_INSTALL"
-        echo
-        echo "Make sure fx-autoconfig is installed correctly."
-        exit 1
-    fi
-fi
-
-mapfile -t PROFILES < <(
-    find "$PROFILE_ROOT" \
-        -mindepth 1 \
-        -maxdepth 1 \
-        -type d \
-        -exec test -f '{}/prefs.js' \; \
-        -print | sort
-)
-
-if (( ${#PROFILES[@]} == 0 )); then
-    echo "No Firefox profiles found."
-    exit 1
-fi
-
-PROFILE=""
-
-if [[ $# -ge 1 ]]; then
-    PROFILE="$1"
-else
-    echo
-    echo "Firefox profiles found:"
-    echo
-
-    for i in "${!PROFILES[@]}"; do
-        printf '%d. %s\n' \
-            "$((i + 1))" \
-            "${PROFILES[$i]}"
-    done
-
-    echo
-    read -r -p "Select profile [1-${#PROFILES[@]}]: " choice
-
-    if ! [[ "$choice" =~ ^[0-9]+$ ]] ||
-       (( choice < 1 || choice > ${#PROFILES[@]} )); then
-        echo "Invalid selection."
-        exit 1
+    if [[ "$PROFILE_ROOT" == *"/snap/"* ]]; then
+        warn "Snap Firefox keeps its install directory read-only, so fx-autoconfig usually can't be installed there."
     fi
 
-    PROFILE="${PROFILES[$((choice - 1))]}"
+    choose_profile "$PROFILE_ROOT"
 fi
 
-if [[ ! -d "$PROFILE" ]]; then
-    echo "Profile does not exist:"
-    echo "  $PROFILE"
-    exit 1
+require_autoconfig_profile "$PROFILE"
+
+RUNNING=0
+if firefox_running; then
+    RUNNING=1
+    warn "Firefox is running. Close it and reopen after installing."
 fi
 
-if [[ ! -f "$PROFILE/chrome/utils/boot.sys.mjs" ]]; then
-    echo
-    echo "fx-autoconfig is not installed in this Firefox profile:"
-    echo "  $PROFILE"
-    echo
-    echo "Install fx-autoconfig into this profile first."
-    exit 1
-fi
+mkdir -p "$PROFILE/chrome/JS" "$PROFILE/chrome/CSS"
 
-mkdir -p \
-    "$PROFILE/chrome/JS" \
-    "$PROFILE/chrome/CSS"
+echo
+echo "Installing:"
+copy_with_backup "$SCRIPT_DIR/JS/replace-new-tab.uc.js" "$PROFILE/chrome/JS/replace-new-tab.uc.js"
+copy_with_backup "$SCRIPT_DIR/CSS/zen-newtab.uc.css"    "$PROFILE/chrome/CSS/zen-newtab.uc.css"
 
-cp "$SCRIPT_DIR/JS/replace-new-tab.uc.js" \
-   "$PROFILE/chrome/JS/replace-new-tab.uc.js"
-
-cp "$SCRIPT_DIR/CSS/zen-newtab.uc.css" \
-   "$PROFILE/chrome/CSS/zen-newtab.uc.css"
+save_profile "$PROFILE"
 
 echo
 echo "Installation complete."
+echo "  Profile: $PROFILE"
 echo
-echo "Profile:"
-echo "  $PROFILE"
-echo
-echo "Installed:"
-echo "  chrome/JS/replace-new-tab.uc.js"
-echo "  chrome/CSS/zen-newtab.uc.css"
-echo
-echo "Clear Firefox's startup cache in about:support and restart Firefox."
+
+if (( RUNNING == 0 )); then
+    clear_startup_cache "$PROFILE" || echo "No startup cache found at the usual locations. If the script doesn't load, clear it in about:support."
+else
+    echo "After closing Firefox, clear the startup cache (about:support > Clear startup cache) and reopen."
+fi
+
+cat <<NOTES
+
+Notes:
+  - Ctrl+T (Cmd+T on macOS) opens the centred URL bar. The + button and
+    File > New Tab still open a normal blank tab.
+  - If you have other CSS that changes URL bar behaviour (floating/centred URL
+    bar mods, theme packs), disable it so the two don't fight.
+  - Switch the feature off without uninstalling: set uc.zennewtab.enabled to false.
+  - If you ran an older version of this script, check that browser.urlbar.openintab
+    in about:config is what you expect (reset it if you never set it).
+  - To remove everything: ./uninstall.sh
+NOTES

@@ -15,18 +15,22 @@ The implementation in this project has been modified and simplified to provide o
 
 ## FlexFox
 
-The centered URL-bar CSS is adapted from the corresponding URL-bar positioning implementation in FlexFox.
+The centered URL-bar CSS in this project is adapted from the URL-bar
+centering implementation in FlexFox, particularly the implementation
+associated with `uc.flex.move-urlbar-popup-to-center`.
 
 Original project:
 https://github.com/yuuqilin/FlexFox
 
-FlexFox is primarily licensed under the MIT License.
+Source:
+https://github.com/yuuqilin/FlexFox/blob/main/chrome/components/uc-urlbar.css
 
-Original copyright notice:
+Copyright (c) 2024 Christol Yu, Ravindu Liyanapathirana, and yuuqilin
 
-> Copyright (c) 2024 Christol Yu, Ravindu Liyanapathirana, and yuuqilin
+FlexFox is licensed under the MIT License.
 
-The relevant CSS has been modified and separated from the rest of FlexFox so that this project can provide the centered URL-bar behavior independently.
+The relevant CSS has been modified and separated from FlexFox so that the
+centered URL-bar behavior can be used independently.
 
 ## fx-autoconfig
 

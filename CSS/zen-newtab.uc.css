@@ -1,18 +1,36 @@
 /* Zen-style centered URL bar
- * Independent of FlexFox preferences.
+ *
+ * If you have other CSS that positions or resizes the URL bar (floating or
+ * centred URL bar mods, theme packs, custom #urlbar rules), disable it so the
+ * two don't fight.
+ *
+ * Requirements and fragility
+ *   - Needs CSS anchor positioning (anchor-name, position-anchor, anchor()).
+ *     Everything below sits inside an @supports block, so on a Firefox without
+ *     it this stylesheet does nothing and the URL bar keeps its normal position.
+ *   - Depends on Firefox's current URL bar markup: #urlbar, #urlbar-background,
+ *     .urlbar-background, .urlbar-input-container, .urlbarView, and the
+ *     [popover], [popover-open], [focused] and [usertyping] attributes. Firefox
+ *     can change these between versions. If the bar stops centering after an
+ *     update, check these selectors first.
+ *
+ * The bar floats whenever it is focused and being typed in (Ctrl+T, Ctrl+L, or
+ * clicking it).
  */
 
-/*
- * Firefox 157+ keeps #urlbar in the toolbar but allows its
- * background/input elements to be positioned independently.
- */
+@supports (anchor-name: --a) {
 
-#urlbar-container {
+    /*
+     * Firefox 157+ keeps #urlbar in the toolbar but allows its
+     * background/input elements to be positioned independently.
+     */
+
+    #urlbar-container {
     anchor-name: --constantine-urlbar-container-anchor;
     container-type: inline-size;
-}
+    }
 
-#urlbar:not([popover]) {
+    #urlbar:not([popover]) {
     contain: none !important;
 
     /* NORMAL / DEFAULT POSITION */
@@ -20,123 +38,147 @@
     --constantine-urlbar-left: anchor(left);
     --constantine-urlbar-width: 100cqi;
     --constantine-urlbar-margin-top: 0px;
-}
+    }
 
-#urlbar:not([popover]) > :where(
+    #urlbar:not([popover]) > :where(
     #urlbar-background,
     .urlbar-background,
     .urlbar-input-container
-) {
-    position: fixed !important;
-    position-anchor: --constantine-urlbar-container-anchor;
+    ) {
+        position: fixed !important;
+        position-anchor: --constantine-urlbar-container-anchor;
 
-    inset: auto !important;
+        inset: auto !important;
 
-    top: calc(
-        anchor(top) +
-        (anchor-size(height) - var(--constantine-urlbar-height)) / 2
-    ) !important;
+        top: calc(
+            anchor(top) +
+            (anchor-size(height) - var(--constantine-urlbar-height)) / 2
+        ) !important;
 
-    left: var(--constantine-urlbar-left) !important;
-    width: var(--constantine-urlbar-width) !important;
-    height: var(--constantine-urlbar-height) !important;
+        left: var(--constantine-urlbar-left) !important;
+        width: var(--constantine-urlbar-width) !important;
+        height: var(--constantine-urlbar-height) !important;
 
-    margin: 0 !important;
-    margin-top: var(--constantine-urlbar-margin-top) !important;
+        margin: 0 !important;
+        margin-top: var(--constantine-urlbar-margin-top) !important;
 
-    transition:
+        transition:
         box-shadow 0.3s ease-out,
         left 0.3s ease,
         width 0.3s ease,
         margin-top 0.3s ease !important;
-}
+    }
 
-/*
- * CENTERED STATE
- *
- * This replaces FlexFox's
- * uc.flex.move-urlbar-popup-to-center = 1
- */
+    /*
+     * CENTERED STATE
+     *
+     * Width is 44vw, but never narrower than 360px or wider than 860px, and
+     * never wider than the window minus 32px, so small windows still fit.
+     * The left edge is computed from that width so the bar stays centred.
+     */
 
-#urlbar[focused][usertyping],
-#urlbar[popover-open] {
+    #urlbar[focused][usertyping],
+    #urlbar[popover-open] {
+    --constantine-center-width: min(
+        clamp(360px, 44vw, 860px),
+                                    calc(100vw - 32px)
+    );
+
     --constantine-urlbar-height: 50px;
-    --constantine-urlbar-left: 28vw;
-    --constantine-urlbar-width: 44vw;
+    --constantine-urlbar-width: var(--constantine-center-width);
+    --constantine-urlbar-left: calc(
+        (100vw - var(--constantine-center-width)) / 2
+    );
     --constantine-urlbar-margin-top: 20vh;
-}
+    }
 
-/*
- * Firefox's popup background extends slightly beyond the
- * actual input container.
- */
+    /*
+     * Firefox's popup background extends slightly beyond the
+     * actual input container.
+     */
 
-#urlbar[popover-open] > :where(
+    #urlbar[popover-open] > :where(
     #urlbar-background,
     .urlbar-background
-) {
-    top: calc(
-        anchor(top) +
-        (anchor-size(height) - var(--constantine-urlbar-height)) / 2 -
-        var(--urlbar-background-overhang-open, 8px)
-    ) !important;
+    ) {
+        top: calc(
+            anchor(top) +
+            (anchor-size(height) - var(--constantine-urlbar-height)) / 2 -
+            var(--urlbar-background-overhang-open, 8px)
+        ) !important;
 
-    left: calc(
-        var(--constantine-urlbar-left) -
-        var(--urlbar-background-overhang-open, 8px)
-    ) !important;
+        left: calc(
+            var(--constantine-urlbar-left) -
+            var(--urlbar-background-overhang-open, 8px)
+        ) !important;
 
-    width: calc(
-        var(--constantine-urlbar-width) +
-        2 * var(--urlbar-background-overhang-open, 8px)
-    ) !important;
+        width: calc(
+            var(--constantine-urlbar-width) +
+            2 * var(--urlbar-background-overhang-open, 8px)
+        ) !important;
 
-    height: calc(
-        var(--constantine-urlbar-height) +
-        var(--urlbar-background-overhang-open, 8px) +
-        var(--urlbar-joint-background-overlap, 24px)
-    ) !important;
-}
+        height: calc(
+            var(--constantine-urlbar-height) +
+            var(--urlbar-background-overhang-open, 8px) +
+            var(--urlbar-joint-background-overlap, 24px)
+        ) !important;
+    }
 
-/*
- * Keep the centered URL bar visible above the page.
- */
+    /*
+     * Keep the centered URL bar visible above the page.
+     */
 
-#navigator-toolbox:has(
+    #navigator-toolbox:has(
     #urlbar[popover-open],
     #urlbar:not([popover])[focused][usertyping]
-) {
-    --browser-area-z-index-toolbox: 5 !important;
-}
+    ) {
+        --browser-area-z-index-toolbox: 5 !important;
+    }
 
-#main-window #nav-bar:has(
+    #main-window #nav-bar:has(
     #urlbar[popover-open],
     #urlbar:not([popover])[focused][usertyping]
-),
-#main-window #navigator-toolbox:has(
+    ),
+    #main-window #navigator-toolbox:has(
     #urlbar[popover-open],
     #urlbar:not([popover])[focused][usertyping]
-) {
-    transform: none !important;
-    transition: none !important;
-}
+    ) {
+        transform: none !important;
+        transition: none !important;
+    }
 
-/*
- * Enlarged centered input.
- */
+    /*
+     * Enlarged centered input.
+     */
 
-#urlbar:is(
+    #urlbar:is(
     [popover-open],
     [focused][usertyping]
-) > .urlbar-input-container {
-    height: 50px !important;
-    padding-inline: 15px !important;
-}
+    ) > .urlbar-input-container {
+        height: 50px !important;
+        padding-inline: 15px !important;
+    }
 
-/*
- * Keep the URL-bar results aligned with the centered input.
- */
+    /*
+     * Keep the URL-bar results aligned with the centered input.
+     */
 
-#urlbar[popover-open] > .urlbarView:popover-open {
+    #urlbar[popover-open] > .urlbarView:popover-open {
     --urlbarView-margin-block: 4px;
+    }
+
+    /*
+     * Respect the system "reduce motion" setting.
+     * Placed last so it wins over the transition above.
+     */
+
+    @media (prefers-reduced-motion: reduce) {
+        #urlbar:not([popover]) > :where(
+        #urlbar-background,
+        .urlbar-background,
+        .urlbar-input-container
+        ) {
+            transition: none !important;
+        }
+    }
 }
