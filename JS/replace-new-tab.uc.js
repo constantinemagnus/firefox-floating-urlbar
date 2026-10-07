@@ -5,7 +5,7 @@
 // @ignorecache
 // ==/UserScript==
 
-/*
+/* This file is licensed under the GNU General Public License, version 3.
  * Originally adapted from Natsumi Browser's new-tab replacement
  * (https://github.com/greeeen-dev/natsumi-browser, GPL-3.0).
  * See ATTRIBUTION.md for the full attribution.
@@ -39,7 +39,7 @@
 
  // Older versions of this script overrode browser.urlbar.openintab and kept a
  // backup here. Restore it once if a previous session left it behind.
- const LEGACY_PREF_SAVED = "uc.floatingurlbar.saved-openintab";
+ const LEGACY_PREF_SAVED = "uc.zennewtab.saved-openintab";
  const PREF_OPENINTAB = "browser.urlbar.openintab";
 
  const commandId = "constantineReplaceNewTab";
@@ -96,17 +96,18 @@
 
  const whereToOpenTargets = [];
 
+ if (typeof gURLBar._whereToOpen === "function") {
+     whereToOpenTargets.push([gURLBar, "_whereToOpen"]);
+ }
+
  if (typeof gURLBar.controller?.whereToOpen === "function") {
      whereToOpenTargets.push([gURLBar.controller, "whereToOpen"]);
- } else if (typeof gURLBar._whereToOpen === "function") {
-     whereToOpenTargets.push([gURLBar, "_whereToOpen"]);
  }
 
  if (whereToOpenTargets.length === 0) {
      console.warn(
-         "[Replace New Tab] Firefox exposes neither " +
-         "gURLBar.controller.whereToOpen nor gURLBar._whereToOpen; " +
-         "falling back to normal new-tab behavior."
+         "[Replace New Tab] Firefox exposes neither gURLBar._whereToOpen nor " +
+         "gURLBar.controller.whereToOpen; falling back to normal new-tab behavior."
      );
      return;
  }
@@ -120,6 +121,14 @@
  let viewWasOpen = false;
  let tabCountAtStart = 0;
  let flowId = 0;           // invalidates timers from earlier flows
+
+ // Menus that belong to the URL bar (e.g. the search-engine dropdown). While
+ // one is open the input loses focus and the results view closes, which would
+ // otherwise cancel the flow and let the floating bar drop back to the toolbar.
+ const urlbarPopups = new Set();
+ const HOLD_ATTR = "floatingurlbar-hold";   // the CSS keeps the bar centred while this is set
+ const CENTERED_SELECTOR = "[focused][usertyping], [popover-open]";
+ let centeredAtMouseDown = false;
 
  const isEnabled = () => Services.prefs.getBoolPref(PREF_ENABLED, true);
 
@@ -238,7 +247,9 @@
          }
 
          if (requireIdle &&
-             (urlbar.hasAttribute("open") || urlbar.hasAttribute("focused"))) {
+             (urlbar.hasAttribute("open") ||
+             urlbar.hasAttribute("focused") ||
+             urlbarPopups.size > 0)) {
              return;
              }
 
@@ -350,6 +361,11 @@
          return;
      }
 
+     // Enter/Escape inside the engine menu belong to the menu, not to the flow.
+     if (urlbarPopups.size > 0) {
+         return;
+     }
+
      // Ignore the Enter/Escape that belongs to an IME composition.
      if (event.isComposing || event.keyCode === 229) {
          return;
@@ -367,6 +383,79 @@
          endFlow({ revert: true, refocus: true });
      }
  });
+
+ // ---------------------------------------------------------------
+ // Menus opened from the URL bar (search-engine dropdown, context menu)
+ // ---------------------------------------------------------------
+
+ function belongsToUrlbar(popup) {
+     return !!popup &&
+     (urlbar.contains(popup) || urlbar.contains(popup.anchorNode));
+ }
+
+ // Opening a menu can close the results view before the menu appears, so
+ // remember whether the bar was floating at the moment of the click.
+ //
+ // There is deliberately no timeout: Firefox may build the menu
+ // asynchronously before showing it. Instead the flag belongs to the input
+ // that set it: any newer mouse click anywhere in the window or any key press
+ // supersedes it, and it is cleared when the menu hides. So it can't survive
+ // a click-away and later be mistaken for the origin of an unrelated popup
+ // (e.g. a site permission prompt anchored to the URL bar).
+ window.addEventListener("mousedown", event => {
+     centeredAtMouseDown =
+     urlbar.contains(event.target) && urlbar.matches(CENTERED_SELECTOR);
+ }, true);
+
+ window.addEventListener("keydown", () => {
+     centeredAtMouseDown = false;
+ }, true);
+
+ window.addEventListener("popupshowing", event => {
+     log("popupshowing", event.target?.id, "belongs to urlbar:", belongsToUrlbar(event.target));
+
+     if (!belongsToUrlbar(event.target)) {
+         return;
+     }
+
+     if (armed || centeredAtMouseDown || urlbar.matches(CENTERED_SELECTOR)) {
+         urlbar.setAttribute(HOLD_ATTR, "");
+
+         // If the popup never actually opens, don't leave the bar held.
+         setTimeout(() => {
+             if (urlbarPopups.size === 0) {
+                 urlbar.removeAttribute(HOLD_ATTR);
+             }
+         }, 500);
+     }
+ }, true);
+
+ window.addEventListener("popupshown", event => {
+     if (belongsToUrlbar(event.target)) {
+         urlbarPopups.add(event.target);
+     }
+ }, true);
+
+ window.addEventListener("popuphidden", event => {
+     if (!urlbarPopups.delete(event.target) || urlbarPopups.size > 0) {
+         return;
+     }
+
+     centeredAtMouseDown = false;
+
+     // Give focus a moment to return to the bar before releasing the hold.
+     setTimeout(() => {
+         if (urlbarPopups.size === 0) {
+             urlbar.removeAttribute(HOLD_ATTR);
+         }
+     }, 150);
+
+     // If focus did not come back (menu dismissed by clicking elsewhere),
+     // treat it as a cancel, same as a plain blur.
+     if (armed && !submitted) {
+         endFlowLater(END_DELAY_MS, { revert: true }, true);
+     }
+ }, true);
 
  window.addEventListener("unload", () => {
      endFlow();
