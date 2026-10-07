@@ -89,4 +89,9 @@ That method is internal to Firefox, and Mozilla is moving it (`UrlbarInput._wher
 
 ## License and attribution
 
-Licensed under GPL-3.0 (see `LICENSE`). The new-tab replacement was originally adapted from [Natsumi Browser](https://github.com/greeeen-dev/natsumi-browser) (GPL-3.0). See `ATTRIBUTION.md` for details.
+Licensed under GPL-3.0 (see `LICENSE`). The new-tab replacement was originally
+adapted from [Natsumi Browser](https://github.com/greeeen-dev/natsumi-browser)
+(GPL-3.0), and the centered URL-bar CSS was adapted from
+[FlexFox](https://github.com/yuuqilin/FlexFox) (MIT). See `ATTRIBUTION.md` for
+full attribution and license details.
+

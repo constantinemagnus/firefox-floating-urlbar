@@ -16,6 +16,12 @@
  *
  * The bar floats whenever it is focused and being typed in (Ctrl+T, Ctrl+L, or
  * clicking it).
+ *
+ *  * The centered URL-bar CSS is adapted from FlexFox
+ * (MIT License), particularly:
+ * https://github.com/yuuqilin/FlexFox/blob/main/chrome/components/uc-urlbar.css
+ *
+ * See ATTRIBUTION.md for the full attribution and license notice.
  */
 
 @supports (anchor-name: --a) {
