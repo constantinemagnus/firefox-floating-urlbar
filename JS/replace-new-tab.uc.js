@@ -13,22 +13,31 @@
  * What this script does
  *   - Ctrl+T (Cmd+T on macOS) focuses the URL bar instead of opening a blank tab.
  *   - Enter then opens the URL or search in a NEW tab. Escape cancels.
+ *   - Ctrl+L (Cmd+L on macOS) floats the bar with normal current-tab navigation.
  *   - The + button and File > New Tab are left alone: they open a normal blank tab.
  *
  * How it works
  *   While a "new tab" flow is active in THIS window, a navigation that Firefox
  *   would have loaded in the current tab is redirected to a new tab. This is done
- *   by wrapping Firefox's internal "where should this open" method on this
- *   window's URL bar. No global preference is changed, so other windows are
- *   unaffected and there is nothing to restore after a crash.
+ *   by wrapping the available destination methods on this window's URL bar
+ *   and controller. Blank tabs are reused. Submission hooks carry intent
+ *   through asynchronous result handling; commit hooks finish the session
+ *   when navigation starts, not when Enter only confirms a search mode.
+ *   No navigation preference is changed during a flow, so other windows are
+ *   unaffected. A saved preference from older versions is restored once.
  *
- *   That method is internal and Mozilla is moving it (UrlbarInput._whereToOpen ->
- *   UrlbarChildController.whereToOpen). The script wraps whichever exists, and if
- *   neither does it logs a warning and leaves Firefox's Ctrl+T untouched.
+ *   These hooks are internal: destinations use UrlbarInput._whereToOpen and/or
+ *   UrlbarChildController.whereToOpen; commits use the input's _loadURL or its
+ *   parent controller's loadURL, openSERP, openSearchForm and switchToTab.
+ *   The controller's resolveFallbackNavigation is wrapped when available.
+ *   If no destination hook exists, or required navigation/editing APIs are
+ *   missing, the script warns and leaves Firefox's Ctrl+T untouched.
  *
  * Preferences (about:config, optional)
  *   uc.floatingurlbar.enabled   (bool, default true)   false = Firefox's normal new tab.
  *   uc.floatingurlbar.debug     (bool, default false)  Log to the Browser Console (Ctrl+Shift+J).
+ *   uc.floatingurlbar.animate   (bool, default false)  CSS-only position/width animation.
+ *   uc.floatingurlbar.dim       (bool, default true)   CSS-only background dimming.
  */
 
 (() => {
@@ -280,6 +289,7 @@
              navigationContext = previous;
          }
      };
+     log("wrapped submission hook", `gURLBar.${name}`);
  }
 
  for (const [owner, name] of commitTargets) {
@@ -294,6 +304,8 @@
          }
          return original.apply(this, args);
      };
+     log("wrapped commit hook", owner === gURLBar
+         ? `gURLBar.${name}` : `gURLBar.controller.parentController.${name}`);
  }
 
  if (typeof gURLBar.controller?.resolveFallbackNavigation === "function") {
@@ -311,6 +323,7 @@
              return result;
          });
      };
+     log("wrapped fallback-navigation hook", "gURLBar.controller.resolveFallbackNavigation");
  }
 
  // ---------------------------------------------------------------

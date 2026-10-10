@@ -57,7 +57,7 @@ The included installer currently supports Linux. Windows and macOS users can use
 
 1. Copy `JS/replace-new-tab.uc.js` into your profile's `chrome/JS/` folder.
 2. Copy `CSS/firefox-floating-urlbar.uc.css` into your profile's `chrome/CSS/` folder.
-3. Close Firefox, open it again, then go to `about:support` and click **Clear startup cache**, and restart once more.
+3. In Firefox, go to `about:support`, click **Clear startup cache**, and confirm the restart.
 
 ## Update
 
@@ -114,7 +114,7 @@ If you already use other CSS or scripts that change how the URL bar looks or beh
 
 While a Ctrl+T flow is active in a window, a navigation Firefox would have loaded in the current tab is redirected to a new tab. This is done by wrapping Firefox's internal "where should this open" method on that window's URL bar, so no global preference is changed and other windows are unaffected. A blank current tab is reused rather than stacking another one.
 
-That method is internal to Firefox, and Mozilla is moving it (`UrlbarInput._whereToOpen` → `UrlbarChildController.whereToOpen`). The script wraps whichever one exists. If neither does, it logs a warning in the Browser Console and leaves Firefox's own Ctrl+T alone.
+Those destination methods are internal to Firefox (`UrlbarInput._whereToOpen` and `UrlbarChildController.whereToOpen`). The script wraps each available method, carries submission intent through asynchronous result handling, and ends the session at navigation commit rather than search-mode selection. If no destination method is available, or required navigation/editing APIs are missing, it logs a warning in the Browser Console and leaves Firefox's own Ctrl+T alone.
 
 ## Troubleshooting
 
@@ -122,6 +122,11 @@ That method is internal to Firefox, and Mozilla is moving it (`UrlbarInput._wher
 - **Ctrl+T behaves like normal Firefox.** Set `uc.floatingurlbar.debug` to `true` in `about:config`, restart, and open the Browser Console (Ctrl+Shift+J). A working install logs `[Replace New Tab] wrapped whereToOpen` (newer Firefox, including 157) or `wrapped _whereToOpen` (older Firefox), followed by `loaded`. Other messages in the console (Region, TopSites, Glean, experiments) come from Firefox itself and can be ignored. If you see a warning that Firefox exposes neither `gURLBar._whereToOpen` nor `gURLBar.controller.whereToOpen`, your Firefox has moved that method again; please open an issue with your Firefox version and the console output.
 - **The bar opens but isn't centred.** Firefox changed its URL bar markup. The selectors the stylesheet depends on are listed at the top of `CSS/firefox-floating-urlbar.uc.css`. Please open an issue with your Firefox version.
 - **Enter opens in the current tab.** Turn on `uc.floatingurlbar.debug` and include the console output in an issue.
+
+Debug startup messages also list installed submission and commit hooks, plus
+the fallback-navigation hook when available. Include these with your Firefox
+version when reporting navigation problems; they show which internal APIs the
+script found, but cannot guarantee those APIs still behave as expected.
 
 ## Development checks
 

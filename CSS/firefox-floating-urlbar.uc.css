@@ -140,7 +140,7 @@
     #urlbar-background,
     .urlbar-background
     ) {
-        background-color: var(--urlbar-background-color-focus) !important;
+        background-color: var(--urlbar-background-color-focus, var(--toolbar-field-background-color-focus)) !important;
     }
 
     /*
