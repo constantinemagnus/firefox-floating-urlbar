@@ -183,8 +183,8 @@
  }
 
  function captureNavigationContext() {
-     // Intent and blank-tab reuse are submission snapshots: Ctrl+T can change
-     // an existing Ctrl+L session's intent before a deferred lookup runs.
+     // Intent and blank-tab reuse belong to the submission even when Ctrl+T
+     // starts another query before a deferred destination lookup runs.
      return { session: editingSession, newTab: editingSession?.newTab ?? false, reuseEmpty: currentTabIsEmpty() };
  }
 
@@ -264,10 +264,19 @@
          if (canRemember && !navigation) {
              navigationEvents.set(event, { context });
          }
+         if (name === "handleNavigation" && editingSession && context.session === editingSession &&
+             (gURLBar.untrimmedValue || gURLBar.view.selectedResult)) {
+             // The handler may return before its heuristic reaches pickResult.
+             editingSession.pendingNavigation = context;
+         }
          navigationContext = context;
          try {
              return original.apply(this, args);
          } finally {
+             if (name === "pickResult" && context.session?.pendingNavigation === context) {
+                 // A result that only confirms search mode leaves editing active.
+                 context.session.pendingNavigation = null;
+             }
              navigationContext = previous;
          }
      };
@@ -321,7 +330,7 @@
 
  function startFloating() {
      if (!editingSession) {
-         editingSession = { newTab: false };
+         editingSession = { newTab: false, pendingNavigation: null };
      }
      urlbar.setAttribute(ACTIVE_ATTR, "");
 
@@ -423,6 +432,11 @@
          return;
      }
 
+     // A submitted query owns its session until completion. A new Ctrl+T must
+     // not let that submission's replay or cleanup finish the next query.
+     if (editingSession && (!editingSession.newTab || editingSession.pendingNavigation)) {
+         endFlow();
+     }
      startFloating();
 
      // Already in a flow: just make sure the bar has focus.

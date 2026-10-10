@@ -466,6 +466,28 @@ test("destination lookup while confirming search mode is not a commit", () => {
     assert.equal(s.gURLBar.searchMode.engineName, "chosen-engine");
 });
 
+test("repeated Ctrl+T during editing, empty Enter or search-mode confirmation preserves the query", () => {
+    for (const action of ["editing", "empty", "search-mode"]) {
+        const s = setup(); s.ctrlT();
+        if (action !== "empty") s.type("keep editing");
+        if (action === "empty") s.gURLBar.handleCommand(s.key("Enter"));
+        if (action === "search-mode") {
+            s.gURLBar.handleNavigation({ event: s.key("Enter"),
+                result: { providesSearchMode: true, engine: "chosen-engine" } });
+        }
+        const value = s.input.value;
+        const mode = s.gURLBar.searchMode;
+        const selects = s.input.selectCalls;
+        s.ctrlT();
+        assert.equal(s.input.value, value);
+        assert.equal(s.gURLBar.untrimmedValue, value);
+        assert.equal(s.gURLBar.searchMode, mode);
+        assert.equal(s.input.selectCalls, selects + 1);
+        assert.equal(s.active(), true);
+        assert.equal(s.where({}), "tab");
+    }
+});
+
 test("engine submissions preserve the selected engine, query and destination", () => {
     for (const newTab of [false, true]) {
         const s = setup();
@@ -534,6 +556,7 @@ test("an early destination lookup binds a deferred event to its original session
 test("Ctrl+L to Ctrl+T keeps the original intent before a deferred destination lookup", () => {
     const s = setup();
     s.key("l", { ctrlKey: true }, () => s.input.focus());
+    s.type("first query");
     const event = s.key("Enter");
     s.gURLBar.handleNavigation({ event, defer: true, deferLookup: true,
         result: { url: "https://first.example/", inBackground: true } });
@@ -543,8 +566,79 @@ test("Ctrl+L to Ctrl+T keeps the original intent before a deferred destination l
     s.flushNavigation();
     assert.equal(s.loads[0].options.where, "current");
     assert.equal(s.where(event), "current");
-    // Ctrl+T changes intent within this existing session, rather than replacing it.
-    assert.equal(s.active(), false);
+    assert.equal(s.active(), true);
+    assert.equal(s.where({}), "tab");
+});
+
+test("Ctrl+T after a pending submission starts blank and survives the old completion", () => {
+    for (const firstNewTab of [false, true]) {
+        for (const deferLookup of [false, true]) {
+            const s = setup();
+            if (firstNewTab) s.ctrlT();
+            else s.key("l", { ctrlKey: true }, () => s.input.focus());
+            s.type("first query"); s.view(true);
+            const first = s.key("Enter");
+            s.gURLBar.handleNavigation({ event: first, defer: true, deferLookup,
+                result: { url: "https://first.example/", inBackground: true } });
+            s.gURLBar._resultForCurrentValue = { url: "https://stale.example/" };
+            s.gURLBar.view.selectedResult = { url: "https://selected.example/" };
+
+            // No blur, tab selection or cancellation timer separates the flows.
+            s.ctrlT();
+            assert.equal(s.input.value, "");
+            assert.equal(s.gURLBar.untrimmedValue, "");
+            assert.equal(s.gURLBar.userTypedValue, "");
+            assert.equal(s.gURLBar._resultForCurrentValue, null);
+            assert.equal(s.gURLBar.view.selectedResult, null);
+            s.type("second query"); s.ctrlT();
+            assert.equal(s.input.value, "second query");
+
+            const second = s.key("Enter");
+            s.gURLBar.handleNavigation({ event: second, defer: true, deferLookup: true,
+                result: { url: "https://second.example/", inBackground: true } });
+            s.flushNavigation(); s.advance(10000);
+            assert.equal(s.loads[0].options.where, firstNewTab ? "tab" : "current");
+            assert.equal(s.loads[0].options.browserId, 1);
+            assert.equal(s.where(first), firstNewTab ? "tab" : "current");
+            assert.equal(s.active(), true);
+            assert.equal(s.where({}), "tab");
+
+            s.flushNavigation();
+            assert.equal(s.loads[1].options.loadRequest.urlLoad.url, "https://second.example/");
+            assert.equal(s.loads[1].options.where, "tab");
+            assert.equal(s.active(), false);
+            assert.equal(s.where(second), "tab");
+        }
+    }
+});
+
+test("a fresh Ctrl+T preserves the pending submission's blank-tab reuse snapshot", () => {
+    const s = setup(); s.browser.selectedTab.isEmpty = true; s.ctrlT();
+    s.type("first query");
+    const event = s.key("Enter");
+    s.gURLBar.handleNavigation({ event, defer: true, deferLookup: true,
+        result: { url: "https://first.example/", inBackground: true } });
+    s.ctrlT();
+    s.browser.selectedTab.isEmpty = false;
+    s.flushNavigation();
+    assert.equal(s.loads[0].options.where, "current");
+    assert.equal(s.where(event), "current");
+    assert.equal(s.active(), true);
+    assert.equal(s.where({}), "tab");
+});
+
+test("old blur callbacks cannot clean up an immediately restarted Ctrl+T session", () => {
+    const s = setup(); s.ctrlT(); s.type("first query");
+    s.gURLBar.handleNavigation({ event: s.key("Enter"), defer: true,
+        result: { url: "https://first.example/", inBackground: true } });
+    s.window.emit("mousedown", { target: s.input });
+    s.page.focus(); s.advance(200);
+    s.ctrlT(); s.type("second query");
+    s.advance(10000);
+    assert.equal(s.active(), true);
+    assert.equal(s.input.value, "second query");
+    assert.equal(s.gURLBar.revertCalls, 0);
+    assert.equal(s.where({}), "tab");
 });
 
 test("nested navigation events cache their own destinations within a shared context", () => {
@@ -703,18 +797,24 @@ test("resolved URI fixup commits before a slow current-tab load can be cancelled
     assert.equal(s.active(), false);
 });
 
-test("an old URI fixup does not complete a newer editing session", async () => {
-    let resolve;
-    const s = setup({ fallbackResult: new Promise(r => { resolve = r; }) });
-    s.ctrlT(); s.type("pending.invalid");
-    const navigation = s.gURLBar.handleNavigation({ event: s.key("Enter"), fallback: true });
-    s.page.focus(); s.advance(400);
-    s.ctrlT();
-    resolve({ fixup: { url: "https://pending.invalid/", inBackground: true } });
-    await navigation;
-    assert.equal(s.loads[0].options.where, "tab");
-    assert.equal(s.active(), true);
-    assert.equal(s.where({}), "tab");
+test("an old URI fixup does not complete an immediately restarted Ctrl+T session", async () => {
+    for (const firstNewTab of [false, true]) {
+        let resolve;
+        const s = setup({ fallbackResult: new Promise(r => { resolve = r; }) });
+        if (firstNewTab) s.ctrlT();
+        else s.key("l", { ctrlKey: true }, () => s.input.focus());
+        s.type("pending.invalid");
+        const navigation = s.gURLBar.handleNavigation({ event: s.key("Enter"), fallback: true });
+        s.ctrlT();
+        assert.equal(s.input.value, "");
+        assert.equal(s.gURLBar.untrimmedValue, "");
+        s.type("second query");
+        resolve({ fixup: { url: "https://pending.invalid/", inBackground: true } });
+        await navigation;
+        assert.equal(s.loads[0].options.where, firstNewTab ? "tab" : "current");
+        assert.equal(s.active(), true);
+        assert.equal(s.where({}), "tab");
+    }
 });
 
 test("fallback heuristics may confirm search mode without completing the flow", async () => {
