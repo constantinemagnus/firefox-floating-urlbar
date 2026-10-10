@@ -4,14 +4,25 @@ This project is an independent Firefox customization and is not affiliated with 
 
 ## Natsumi Browser
 
-The JavaScript implementation of the new-tab replacement is adapted from the Replace New Tab functionality in Natsumi Browser.
+The initial new-tab replacement was adapted from Natsumi Browser. Its navigation
+and session implementation has since been rewritten; this credit records its
+historical origin.
 
 Original project:
 https://github.com/greeeen-dev/natsumi-browser
 
-Natsumi Browser is licensed under the GNU General Public License, version 3.
+Natsumi Browser has a GPL-3.0 root license, but the relevant source file,
+`natsumi/scripts/urlbar.uc.mjs`, carries an MIT license notice.
 
-The implementation in this project has been modified and simplified to provide only the new-tab behavior needed here.
+Original-era file revision reviewed (the exact revision originally used was not
+recorded):
+https://github.com/greeeen-dev/natsumi-browser/blob/d4920fc1e180c24057a4bd5191356fb260f0ac5a/natsumi/scripts/urlbar.uc.mjs
+
+Copyright (c) 2024-present Green (@greeeen-dev)
+
+The full MIT permission and warranty terms reproduced below for FlexFox are
+identical to those in this Natsumi file and also apply to the historical
+Natsumi-derived code.
 
 ## FlexFox
 

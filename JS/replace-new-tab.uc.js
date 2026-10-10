@@ -6,8 +6,8 @@
 // ==/UserScript==
 
 /* This file is licensed under the GNU General Public License, version 3.
- * Originally adapted from Natsumi Browser's new-tab replacement
- * (https://github.com/greeeen-dev/natsumi-browser, GPL-3.0).
+ * Originally adapted from Natsumi Browser's MIT-licensed new-tab replacement
+ * (https://github.com/greeeen-dev/natsumi-browser).
  * See ATTRIBUTION.md for the full attribution.
  *
  * What this script does
