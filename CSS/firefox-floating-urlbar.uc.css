@@ -31,13 +31,18 @@
 
 @supports (anchor-name: --a) {
 
+    :root {
+        /* 0 disables dimming; 1 is opaque black. */
+        --floatingurlbar-dim-opacity: 0.35;
+    }
+
     /*
      * Firefox 157+ keeps #urlbar in the toolbar but allows its
      * background/input elements to be positioned independently.
      */
 
     #urlbar-container {
-    anchor-name: --constantine-urlbar-container-anchor;
+    anchor-name: --floatingurlbar-container-anchor;
     container-type: inline-size;
     }
 
@@ -45,43 +50,65 @@
     contain: none !important;
 
     /* NORMAL / DEFAULT POSITION */
-    --constantine-urlbar-height: var(--urlbar-height);
-    --constantine-urlbar-left: anchor(left);
-    --constantine-urlbar-width: 100cqi;
-    --constantine-urlbar-margin-top: 0px;
+    --floatingurlbar-height: var(--urlbar-height);
+    --floatingurlbar-left: anchor(left);
+    --floatingurlbar-width: 100cqi;
+    --floatingurlbar-margin-top: 0px;
     }
 
+    /* Keep the input out of toolbar layout in both states. Returning an
+     * animating margin-top to normal flow temporarily enlarges the toolbar. */
     #urlbar:not([popover]) > :where(
     #urlbar-background,
     .urlbar-background,
     .urlbar-input-container
     ) {
         position: fixed !important;
-        position-anchor: --constantine-urlbar-container-anchor;
+        /* Include the border so the input and results backgrounds meet at
+         * the same outer width, matching Firefox's inset-positioned view. */
+        box-sizing: border-box !important;
+        position-anchor: --floatingurlbar-container-anchor;
 
         inset: auto !important;
 
         top: calc(
             anchor(top) +
-            (anchor-size(height) - var(--constantine-urlbar-height)) / 2
+            (anchor-size(height) - var(--floatingurlbar-height)) / 2
         ) !important;
 
-        left: var(--constantine-urlbar-left) !important;
-        width: var(--constantine-urlbar-width) !important;
-        height: var(--constantine-urlbar-height) !important;
+        left: var(--floatingurlbar-left) !important;
+        width: var(--floatingurlbar-width) !important;
+        height: var(--floatingurlbar-height) !important;
 
         margin: 0 !important;
-        margin-top: var(--constantine-urlbar-margin-top) !important;
+        margin-top: var(--floatingurlbar-margin-top) !important;
 
-        transition:
-        box-shadow 0.3s ease-out,
-        left 0.3s ease,
-        width 0.3s ease,
-        margin-top 0.3s ease !important;
+        transition: none !important;
+    }
+
+    /* Animate geometry only: the background shadow switches between viewport
+     * dimming and Firefox's clipped popup shadow when the view opens/closes.
+     * Interpolating those shadows produces a temporary dark halo. */
+    @media -moz-pref("uc.floatingurlbar.animate") {
+        #urlbar:not([popover]) > :where(
+        #urlbar-background,
+        .urlbar-background,
+        .urlbar-input-container
+        ) {
+            transition:
+            left 0.3s ease,
+            width 0.3s ease,
+            margin-top 0.3s ease !important;
+        }
     }
 
     /*
      * CENTERED STATE
+     *
+     * The script sets [floatingurlbar-active] only for Ctrl+T / Ctrl+L.
+     * Clicking the normal address field or automatic focus in a new tab or
+     * window must not activate the floating layout.
+     * Once activated, float even when suggestion settings leave the view closed.
      *
      * [floatingurlbar-hold] is set by the script while a menu opened from the
      * URL bar (e.g. the search-engine dropdown) is showing. Opening the menu
@@ -93,20 +120,18 @@
      * The left edge is computed from that width so the bar stays centred.
      */
 
-    #urlbar[focused][usertyping],
-    #urlbar[popover-open],
-    #urlbar[floatingurlbar-hold] {
-    --constantine-center-width: min(
+    #urlbar[floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold]) {
+    --floatingurlbar-center-width: min(
         clamp(360px, 44vw, 860px),
                                     calc(100vw - 32px)
     );
 
-    --constantine-urlbar-height: 50px;
-    --constantine-urlbar-width: var(--constantine-center-width);
-    --constantine-urlbar-left: calc(
-        (100vw - var(--constantine-center-width)) / 2
+    --floatingurlbar-height: 50px;
+    --floatingurlbar-width: var(--floatingurlbar-center-width);
+    --floatingurlbar-left: calc(
+        (100vw - var(--floatingurlbar-center-width)) / 2
     );
-    --constantine-urlbar-margin-top: 20vh;
+    --floatingurlbar-margin-top: 20vh;
     }
 
     /*
@@ -120,22 +145,22 @@
     ) {
         top: calc(
             anchor(top) +
-            (anchor-size(height) - var(--constantine-urlbar-height)) / 2 -
+            (anchor-size(height) - var(--floatingurlbar-height)) / 2 -
             var(--urlbar-background-overhang-open, 8px)
         ) !important;
 
         left: calc(
-            var(--constantine-urlbar-left) -
+            var(--floatingurlbar-left) -
             var(--urlbar-background-overhang-open, 8px)
         ) !important;
 
         width: calc(
-            var(--constantine-urlbar-width) +
+            var(--floatingurlbar-width) +
             2 * var(--urlbar-background-overhang-open, 8px)
         ) !important;
 
         height: calc(
-            var(--constantine-urlbar-height) +
+            var(--floatingurlbar-height) +
             var(--urlbar-background-overhang-open, 8px) +
             var(--urlbar-joint-background-overlap, 24px)
         ) !important;
@@ -146,22 +171,16 @@
      */
 
     #navigator-toolbox:has(
-    #urlbar[popover-open],
-    #urlbar:not([popover])[focused][usertyping],
-    #urlbar[floatingurlbar-hold]
+    #urlbar[floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold])
     ) {
         --browser-area-z-index-toolbox: 5 !important;
     }
 
     #main-window #nav-bar:has(
-    #urlbar[popover-open],
-    #urlbar:not([popover])[focused][usertyping],
-    #urlbar[floatingurlbar-hold]
+    #urlbar[floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold])
     ),
     #main-window #navigator-toolbox:has(
-    #urlbar[popover-open],
-    #urlbar:not([popover])[focused][usertyping],
-    #urlbar[floatingurlbar-hold]
+    #urlbar[floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold])
     ) {
         transform: none !important;
         transition: none !important;
@@ -171,9 +190,9 @@
      * Enlarged centered input.
      */
 
-    #urlbar:is(
+    #urlbar[floatingurlbar-active]:is(
     [popover-open],
-    [focused][usertyping],
+    [focused],
     [floatingurlbar-hold]
     ) > .urlbar-input-container {
         height: 50px !important;
@@ -184,8 +203,59 @@
      * Keep the URL-bar results aligned with the centered input.
      */
 
-    #urlbar[popover-open] > .urlbarView:popover-open {
+    #urlbar[floatingurlbar-active][popover-open] > .urlbarView:popover-open {
     --urlbarView-margin-block: 4px;
+    }
+
+    /* Default on when unset; an explicit Boolean false disables both dim layers. */
+    @media not -moz-pref("uc.floatingurlbar.dim", false) {
+        /*
+         * With no suggestions (or while an engine menu is open), no view is in
+         * the top layer. Paint outside the input's background instead. Shadows
+         * do not affect layout or hit testing; the background is also inert.
+         * Exclude the open-view state so the two dim layers never overlap.
+         */
+        #urlbar[floatingurlbar-active]:not([popover-open]):is([focused], [floatingurlbar-hold]) > :where(
+        #urlbar-background,
+        .urlbar-background
+        ) {
+            box-shadow: 0 0 0 100vmax rgb(0 0 0 / var(--floatingurlbar-dim-opacity)) !important;
+            pointer-events: none !important;
+        }
+
+        /*
+         * Adapted from FlexFox's Firefox 157+ backdrop cutout. Only the view is
+         * promoted to the top layer, so a full-viewport backdrop would darken the
+         * toolbar-bound input too. Leave a transparent opening around its solid
+         * background and spread the dim shadow outside it. Native menus and the
+         * view itself paint above this backdrop.
+         */
+        #urlbar[floatingurlbar-active][popover-open] > .urlbarView:popover-open::backdrop {
+            position: fixed !important;
+            position-anchor: --urlbar-anchor !important;
+            inset: auto !important;
+            top: calc(anchor(top) - var(--urlbar-background-overhang-open, 8px)) !important;
+            left: calc(anchor(left) - var(--urlbar-background-overhang-open, 8px)) !important;
+            width: calc(anchor-size(width) + 2 * var(--urlbar-background-overhang-open, 8px)) !important;
+            height: calc(anchor-size(height) + var(--urlbar-background-overhang-open, 8px)) !important;
+            margin: 0 !important;
+            border: 0 !important;
+            padding: 0 !important;
+            border-radius: var(--urlbar-background-border-top-radius-open, var(--toolbarbutton-border-radius))
+                var(--urlbar-background-border-top-radius-open, var(--toolbarbutton-border-radius)) 0 0 !important;
+            background: transparent !important;
+            box-shadow: 0 0 0 100vmax rgb(0 0 0 / var(--floatingurlbar-dim-opacity)) !important;
+            pointer-events: none !important;
+            transition: none !important;
+            animation: none !important;
+        }
+    }
+
+    @media not -moz-pref("uc.floatingurlbar.animate") {
+        #urlbar[floatingurlbar-active] > .urlbarView {
+            transition: none !important;
+            animation: none !important;
+        }
     }
 
     /*
@@ -198,8 +268,10 @@
         #urlbar-background,
         .urlbar-background,
         .urlbar-input-container
-        ) {
+        ),
+        #urlbar[floatingurlbar-active] > .urlbarView {
             transition: none !important;
+            animation: none !important;
         }
     }
 }

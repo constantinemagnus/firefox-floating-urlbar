@@ -33,7 +33,7 @@ while (( $# > 0 )); do
 done
 
 if [[ -z "$PROFILE" ]]; then
-    if saved="$(load_saved_profile)"; then
+    if [[ -z "${PROFILE_ROOT:-}" ]] && saved="$(load_saved_profile)"; then
         PROFILE="$saved"
         echo "Using saved profile: $PROFILE"
     else
@@ -64,8 +64,8 @@ remove_installed() {
     # Only keep a backup if the installed file differs from this repo's copy,
     # i.e. it was edited locally.
     if [[ ! -f "$original" ]] || ! cmp -s "$installed" "$original"; then
-        local backup="$installed.bak-$(date +%Y%m%d%H%M%S)"
-        cp "$installed" "$backup"
+        local backup
+        backup="$(backup_file "$installed")"
         echo "  backed up locally modified file to $(basename "$backup")"
     fi
 

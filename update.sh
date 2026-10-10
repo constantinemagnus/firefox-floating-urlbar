@@ -22,13 +22,21 @@ USAGE
 ASSUME_YES=0
 CHOOSE=0
 PASSTHROUGH=()
+HAS_PROFILE_ARG=0
+HAS_ROOT_ARG=0
+CALLER_DIR="$PWD"
 
 while (( $# > 0 )); do
     case "$1" in
         -y|--yes)  ASSUME_YES=1; shift ;;
         --choose)  CHOOSE=1; shift ;;
         -h|--help) usage; exit 0 ;;
-        *)         PASSTHROUGH+=("$1"); shift ;;
+        -p|--profile|--root)
+            [[ $# -ge 2 ]] || die "$1 needs a value"
+            if [[ "$1" == --root ]]; then HAS_ROOT_ARG=1; else HAS_PROFILE_ARG=1; fi
+            PASSTHROUGH+=("$1" "$2"); shift 2 ;;
+        -*) die "Unknown option: $1 (see --help)" ;;
+        *) HAS_PROFILE_ARG=1; PASSTHROUGH+=("$1"); shift ;;
     esac
 done
 
@@ -46,18 +54,21 @@ git fetch --quiet || die "git fetch failed. Check your network connection and re
 git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1 ||
     die "This branch has no upstream. Run: git branch --set-upstream-to=origin/main"
 
-if [[ "$(git rev-parse HEAD)" == "$(git rev-parse '@{u}')" ]]; then
+CURRENT_REV="$(git rev-parse HEAD)"
+UPSTREAM_REV="$(git rev-parse '@{u}')"
+
+if [[ "$CURRENT_REV" == "$UPSTREAM_REV" ]]; then
     echo "Already up to date."
 else
     echo
     echo "New commits:"
-    git --no-pager log --oneline --no-decorate 'HEAD..@{u}'
+    git --no-pager log --oneline --no-decorate "$CURRENT_REV..$UPSTREAM_REV"
     echo
     echo "Files changed:"
-    git --no-pager diff --stat HEAD '@{u}'
+    git --no-pager diff --stat "$CURRENT_REV" "$UPSTREAM_REV"
     echo
     echo "Tip: these files run with full privileges inside Firefox."
-    echo "     To read the changes first: git diff HEAD '@{u}' -- JS CSS"
+    echo "     To read the changes first: git diff $CURRENT_REV $UPSTREAM_REV -- JS CSS"
     echo
 
     if (( ASSUME_YES == 0 )); then
@@ -65,21 +76,18 @@ else
         [[ "$answer" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
     fi
 
-    if ! git pull --ff-only; then
+    # Apply exactly the revision shown above, without fetching newer changes.
+    if ! git merge --ff-only "$UPSTREAM_REV"; then
         echo >&2
-        echo "git pull --ff-only failed. This usually means you have local edits or the" >&2
+        echo "git merge --ff-only failed. This usually means you have local edits or the" >&2
         echo "history diverged. Try: git status  (then commit, stash or reset your changes)." >&2
         exit 1
     fi
 fi
 
 # Reuse the profile from the last install unless told otherwise.
-HAS_PROFILE_ARG=0
-for arg in "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}"; do
-    case "$arg" in -p|--profile) HAS_PROFILE_ARG=1 ;; esac
-done
-
-if (( CHOOSE == 0 && HAS_PROFILE_ARG == 0 )); then
+if (( CHOOSE == 0 && HAS_PROFILE_ARG == 0 && HAS_ROOT_ARG == 0 )) &&
+    [[ -z "${PROFILE_ROOT:-}" ]]; then
     if saved="$(load_saved_profile)"; then
         echo
         echo "Using saved profile: $saved (pass --choose to pick another)"
@@ -89,4 +97,5 @@ fi
 
 echo
 echo "Installing latest version..."
+cd -- "$CALLER_DIR"
 exec "$SCRIPT_DIR/install.sh" "${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}"

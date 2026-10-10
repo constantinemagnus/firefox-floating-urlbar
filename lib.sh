@@ -66,13 +66,14 @@ list_profiles_from_ini() {
             name = ""; path = ""; rel = "1"
         }
         BEGIN { rel = "1" }
+        { sub(/\r$/, "") }
         /^\[Profile[0-9]+\]/ { flush(); inprof = 1; next }
         /^\[/                { flush(); inprof = 0; next }
         inprof && $1 == "Name"       { name = substr($0, index($0, "=") + 1) }
         inprof && $1 == "Path"       { path = substr($0, index($0, "=") + 1) }
         inprof && $1 == "IsRelative" { rel  = $2 }
         END { flush() }
-    ' "$ini" | tr -d '\r'
+    ' "$ini"
 }
 
 # Prints the raw Path of the profile Firefox treats as default, if known.
@@ -206,15 +207,19 @@ require_autoconfig_profile() {
 }
 
 save_profile() {
+    local absolute
+    absolute="$(cd -- "$1" && pwd -P)" || die "Profile does not exist: $1"
     mkdir -p "$CONFIG_DIR"
-    printf '%s\n' "$1" > "$SAVED_PROFILE_FILE"
+    printf '%s\n' "$absolute" > "$SAVED_PROFILE_FILE"
 }
 
 load_saved_profile() {
     [[ -f "$SAVED_PROFILE_FILE" ]] || return 1
     local saved
     saved="$(head -n1 "$SAVED_PROFILE_FILE")"
-    [[ -n "$saved" && -d "$saved" ]] || return 1
+    # Old relative paths have no recorded base directory; guessing could select
+    # another profile. Let callers ask for the profile again instead.
+    [[ "$saved" == /* && -d "$saved" ]] || return 1
     printf '%s\n' "$saved"
 }
 
@@ -222,13 +227,21 @@ load_saved_profile() {
 # File helpers
 # ---------------------------------------------------------------
 
+backup_file() {
+    local file="$1" backup
+    # Reserve the name atomically; timestamps alone collide on repeated runs.
+    backup="$(mktemp "$file.bak-$(date +%Y%m%d%H%M%S).XXXXXX")" || return
+    cp -p -- "$file" "$backup" || return
+    printf '%s\n' "$backup"
+}
+
 # Copies src to dest; if dest exists and differs, keeps a timestamped backup.
 copy_with_backup() {
     local src="$1" dest="$2"
 
     if [[ -f "$dest" ]] && ! cmp -s "$src" "$dest"; then
-        local backup="$dest.bak-$(date +%Y%m%d%H%M%S)"
-        cp "$dest" "$backup"
+        local backup
+        backup="$(backup_file "$dest")"
         echo "  Backed up existing file to: $(basename "$backup")"
     fi
 

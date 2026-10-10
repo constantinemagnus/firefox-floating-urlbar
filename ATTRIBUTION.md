@@ -17,7 +17,9 @@ The implementation in this project has been modified and simplified to provide o
 
 The centered URL-bar CSS in this project is adapted from the URL-bar
 centering implementation in FlexFox, particularly the implementation
-associated with `uc.flex.move-urlbar-popup-to-center`.
+associated with `uc.flex.move-urlbar-popup-to-center`. Floating background dimming
+also adapts its `uc.flex.dim-urlbar-popup-backdrop` implementation, including the
+Firefox 157+ top-layer backdrop cutout.
 
 Original project:
 https://github.com/yuuqilin/FlexFox
