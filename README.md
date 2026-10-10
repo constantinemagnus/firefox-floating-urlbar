@@ -150,9 +150,13 @@ must preserve each control's normal behavior.
 
 ## License and attribution
 
-Licensed under GPL-3.0 (see `LICENSE`). The new-tab replacement was originally
+Project code and original documentation are licensed under [MIT](LICENSE).
+The new-tab replacement was originally
 adapted from [Natsumi Browser](https://github.com/greeeen-dev/natsumi-browser)
 (source file: MIT), and the centered URL-bar CSS was adapted from
 [FlexFox](https://github.com/yuuqilin/FlexFox) (MIT). See `ATTRIBUTION.md` for
 full attribution and license details.
 
+Third-party imagery, website content, logos, and trademarks shown in the demo
+captures retain their respective rights and are not covered by the project's
+MIT license. See [ATTRIBUTION.md](ATTRIBUTION.md#demo-imagery-and-website-content).
