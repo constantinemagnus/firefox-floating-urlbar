@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const source = fs.readFileSync(path.join(__dirname, "../JS/replace-new-tab.uc.js"), "utf8");
 
 function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missingCommitAPI = false,
-    fallbackResult = Promise.resolve({}) } = {}) {
+    fallbackResult = Promise.resolve({}), configureUrlbar } = {}) {
     class Element {
         constructor(id) {
             this.id = id;
@@ -141,7 +141,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
             this.setValue(browser.selectedBrowser.currentURI.spec);
         },
         handleCommand(event) { return this.handleNavigation({ event }); },
-        handleNavigation({ event, defer = false, fallback = false, result = view.selectedResult } = {}) {
+        handleNavigation({ event, defer = false, deferLookup = false, fallback = false, result = view.selectedResult } = {}) {
             if (!result && !this.untrimmedValue) return;
             if (fallback) {
                 const where = this.controller.whereToOpen(event);
@@ -159,7 +159,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
             // Firefox resolves a fallback before replaying pickResult with
             // the original event and the browser captured at submission.
             if (defer) {
-                this.controller.whereToOpen(event);
+                if (!deferLookup) this.controller.whereToOpen(event);
                 const captured = result ?? { url: this.untrimmedValue };
                 const browserId = browser.selectedBrowser.browserId;
                 pending.push(() => this.pickResult({ event, result: captured, browserId }));
@@ -198,6 +198,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
         delete gURLBar.controller.parentController;
     }
     if (missingCommitAPI) delete gURLBar.controller.parentController;
+    configureUrlbar?.(gURLBar);
     let now = 100000;
     const timers = [];
     vm.runInNewContext(source, {
@@ -362,6 +363,20 @@ test("blank-tab reuse stays attached to the original submission", () => {
     assert.equal(s.where(event), "current");
 });
 
+test("blank-tab reuse is captured even before a deferred destination lookup", () => {
+    for (const initiallyEmpty of [false, true]) {
+        const s = setup(); s.browser.selectedTab.isEmpty = initiallyEmpty; s.ctrlT();
+        const event = s.key("Enter");
+        s.gURLBar.handleNavigation({ event, defer: true, deferLookup: true,
+            result: { url: "https://pending.example/", inBackground: true } });
+        s.browser.selectedTab.isEmpty = !initiallyEmpty;
+        s.flushNavigation();
+        assert.equal(s.loads[0].options.where, initiallyEmpty ? "current" : "tab");
+        assert.equal(s.where(event), initiallyEmpty ? "current" : "tab");
+        assert.equal(s.active(), false);
+    }
+});
+
 test("a committed background submission completes its own flow", () => {
     const s = setup(); s.ctrlT(); s.type("https://new.example/");
     const event = s.key("Enter");
@@ -514,6 +529,94 @@ test("an early destination lookup binds a deferred event to its original session
     assert.equal(s.loads[0].options.where, "tab");
     assert.equal(s.active(), true);
     assert.equal(s.where({}), "current");
+});
+
+test("Ctrl+L to Ctrl+T keeps the original intent before a deferred destination lookup", () => {
+    const s = setup();
+    s.key("l", { ctrlKey: true }, () => s.input.focus());
+    const event = s.key("Enter");
+    s.gURLBar.handleNavigation({ event, defer: true, deferLookup: true,
+        result: { url: "https://first.example/", inBackground: true } });
+    s.ctrlT(); s.type("second query"); s.ctrlT();
+    assert.equal(s.input.value, "second query");
+    assert.equal(s.where({}), "tab");
+    s.flushNavigation();
+    assert.equal(s.loads[0].options.where, "current");
+    assert.equal(s.where(event), "current");
+    // Ctrl+T changes intent within this existing session, rather than replacing it.
+    assert.equal(s.active(), false);
+});
+
+test("nested navigation events cache their own destinations within a shared context", () => {
+    const s = setup({ configureUrlbar(bar) {
+        bar.handleNavigation = function ({ event, nestedEvent }) {
+            const before = this.controller.whereToOpen(event);
+            this.pickResult({ event: nestedEvent, result: { providesSearchMode: true, engine: "chosen-engine" } });
+            return [before, this.controller.whereToOpen(event)];
+        };
+    } });
+    s.ctrlT();
+    const outer = {}, inner = { openWhere: "window" };
+    assert.deepEqual(s.gURLBar.handleNavigation({ event: outer, nestedEvent: inner }), ["tab", "tab"]);
+    assert.equal(s.where(inner), "window");
+    assert.equal(s.where(outer), "tab");
+    assert.equal(s.loads.length, 0);
+    assert.equal(s.active(), true);
+});
+
+test("a nested old event restores the outer session before navigation commits", () => {
+    const s = setup({ configureUrlbar(bar) {
+        bar.handleNavigation = function ({ event, nestedEvent }) {
+            const where = this.controller.whereToOpen(event);
+            this.pickResult({ event: nestedEvent, result: { providesSearchMode: true, engine: "chosen-engine" } });
+            return this.controller.parentController.loadURL({ where, params: { avoidBrowserFocus: true } });
+        };
+    } });
+    s.ctrlT();
+    const oldEvent = {};
+    assert.equal(s.where(oldEvent), "tab");
+    s.key("l", { ctrlKey: true });
+    s.gURLBar.handleNavigation({ event: {}, nestedEvent: oldEvent });
+    assert.equal(s.loads[0].options.where, "current");
+    assert.equal(s.active(), false);
+    assert.equal(s.where(oldEvent), "tab");
+});
+
+test("eventless nested calls inherit the originating context without ending a newer session", () => {
+    const s = setup({ configureUrlbar(bar) {
+        bar.handleCommand = function () {
+            return this.handleNavigation({ result: { url: "https://old.example/", inBackground: true } });
+        };
+    } });
+    s.ctrlT();
+    const oldEvent = {};
+    assert.equal(s.where(oldEvent), "tab");
+    s.key("l", { ctrlKey: true });
+    s.gURLBar.handleCommand(oldEvent);
+    assert.equal(s.loads[0].options.where, "tab");
+    assert.equal(s.active(), true);
+    assert.equal(s.where({}), "current");
+});
+
+test("event destinations preserve object and falsy native return values", () => {
+    for (const destination of [undefined, null, { where: "current", marker: true }]) {
+        const s = setup({ configureUrlbar(bar) {
+            bar.controller.whereToOpen = event => event.destination;
+        } });
+        s.ctrlT();
+        const event = { destination };
+        const remembered = s.where(event);
+        if (destination && typeof destination === "object") {
+            assert.equal(remembered.where, "tab");
+            assert.equal(remembered.marker, true);
+            assert.equal(destination.where, "current");
+        } else {
+            assert.equal(remembered, destination);
+        }
+        event.destination = "window";
+        s.key("l", { ctrlKey: true });
+        assert.equal(s.where(event), remembered);
+    }
 });
 
 test("old cancellation and blur callbacks cannot dismiss a newer session", () => {
@@ -729,6 +832,29 @@ test("a visible menu preserves the flow, then Escape dismisses it", () => {
         assert.equal(s.active(), false);
         assert.equal(s.input.value, "https://example.com");
         assert.equal(s.where({}), "current");
+    }
+});
+
+test("engine menu retains the CSS hold state when blur precedes popupshowing", () => {
+    for (const newTab of [false, true]) {
+        const s = setup();
+        if (newTab) s.ctrlT();
+        else s.key("l", { ctrlKey: true }, () => s.input.focus());
+        s.type("engine query"); s.view(true); s.bar.setAttribute("popover-open");
+        const popup = { anchorNode: s.input };
+        s.window.emit("mousedown", { target: s.input });
+        s.page.focus(); s.bar.removeAttribute("popover-open");
+        s.window.emit("popupshowing", { target: popup });
+        s.window.emit("popupshown", { target: popup });
+        s.advance(1000);
+        assert.equal(s.bar.hasAttribute("focused"), false);
+        assert.equal(s.bar.hasAttribute("open"), false);
+        assert.equal(s.bar.hasAttribute("popover-open"), false);
+        assert.equal(s.bar.hasAttribute("floatingurlbar-hold"), true);
+        assert.equal(s.active(), true);
+        assert.equal(s.where({}), newTab ? "tab" : "current");
+        assert.equal(s.input.value, "engine query");
+        assert.equal(s.gURLBar.revertCalls, 0);
     }
 });
 

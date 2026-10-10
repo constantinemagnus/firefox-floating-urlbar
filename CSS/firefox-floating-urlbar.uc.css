@@ -134,6 +134,15 @@
     --floatingurlbar-margin-top: 20vh;
     }
 
+    /* Menus blur the input and close suggestions. Keep Firefox's focused
+     * background while held floating, instead of its translucent toolbar fill. */
+    #urlbar[floatingurlbar-active][floatingurlbar-hold] > :where(
+    #urlbar-background,
+    .urlbar-background
+    ) {
+        background-color: var(--urlbar-background-color-focus) !important;
+    }
+
     /*
      * Firefox's popup background extends slightly beyond the
      * actual input container.

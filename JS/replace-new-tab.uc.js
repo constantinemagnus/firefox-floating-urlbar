@@ -128,15 +128,14 @@
  // State (per window)
  // ---------------------------------------------------------------
 
- let armed = false;        // a "new tab" flow is in progress in this window
  let viewWasOpen = false;
  let editingSession = null; // identity invalidates cleanup from earlier sessions
  let navigationContext = null;
- const navigationEvents = new WeakMap();
  // Firefox can look up a submission's destination again after resolving an
- // asynchronous heuristic. Keep its original destination even after blur or
- // a tab change ends the flow. Weak keys let completed events be collected.
- const navigationDestinations = new WeakMap();
+ // asynchronous heuristic. Each event keeps its originating context and,
+ // once looked up during a session, its destination. Nested events may share
+ // a context but must retain separate destinations. Weak keys allow collection.
+ const navigationEvents = new WeakMap();
 
  // Menus that belong to the URL bar (e.g. the search-engine dropdown). While
  // one is open the input loses focus and the results view closes, which would
@@ -184,7 +183,9 @@
  }
 
  function captureNavigationContext() {
-     return { session: editingSession, newTab: armed, reuseEmpty: currentTabIsEmpty() };
+     // Intent and blank-tab reuse are submission snapshots: Ctrl+T can change
+     // an existing Ctrl+L session's intent before a deferred lookup runs.
+     return { session: editingSession, newTab: editingSession?.newTab ?? false, reuseEmpty: currentTabIsEmpty() };
  }
 
  // ---------------------------------------------------------------
@@ -216,22 +217,24 @@
          const result = original.apply(this, args);
          const event = args[0];
          const canRemember = event && typeof event === "object";
+         let navigation = canRemember && navigationEvents.get(event);
 
-         if (canRemember && navigationDestinations.has(event)) {
-             return navigationDestinations.get(event);
+         if (navigation && "destination" in navigation) {
+             return navigation.destination;
          }
 
-         let context = (canRemember && navigationEvents.get(event)) || navigationContext;
+         let context = navigation?.context || navigationContext;
          if (!context && editingSession) {
              context = captureNavigationContext();
          }
-         if (context && canRemember) {
-             navigationEvents.set(event, context);
+         if (context && canRemember && !navigation) {
+             navigation = { context };
+             navigationEvents.set(event, navigation);
          }
-         const destination = (context ? context.newTab : armed)
-             ? redirectCurrentToTab(result, context?.reuseEmpty) : result;
+         const destination = context?.newTab
+             ? redirectCurrentToTab(result, context.reuseEmpty) : result;
          if ((editingSession || context?.session) && canRemember) {
-             navigationDestinations.set(event, destination);
+             navigation.destination = destination;
          }
          return destination;
      };
@@ -256,12 +259,10 @@
          const event = getEvent(args);
          const canRemember = event && typeof event === "object";
          const previous = navigationContext;
-         let context = canRemember && navigationEvents.get(event);
-         if (!context) {
-             context = previous || captureNavigationContext();
-             if (canRemember) {
-                 navigationEvents.set(event, context);
-             }
+         const navigation = canRemember && navigationEvents.get(event);
+         const context = navigation?.context || previous || captureNavigationContext();
+         if (canRemember && !navigation) {
+             navigationEvents.set(event, { context });
          }
          navigationContext = context;
          try {
@@ -276,7 +277,7 @@
      const original = owner[name];
      owner[name] = function (...args) {
          const context = navigationContext ||
-             (name === "_loadURL" && navigationEvents.get(args[1]));
+             (name === "_loadURL" && navigationEvents.get(args[1])?.context);
          if (editingSession && context?.session === editingSession) {
              // Finish before Firefox blurs the input or opens a tab. Leave
              // address restoration and failed-load handling to Firefox.
@@ -320,7 +321,7 @@
 
  function startFloating() {
      if (!editingSession) {
-         editingSession = {};
+         editingSession = { newTab: false };
      }
      urlbar.setAttribute(ACTIVE_ATTR, "");
 
@@ -375,7 +376,6 @@
      }
 
      editingSession = null;
-     armed = false;
      viewWasOpen = false;
      stopFloating();
 
@@ -426,13 +426,13 @@
      startFloating();
 
      // Already in a flow: just make sure the bar has focus.
-     if (armed) {
+     if (editingSession.newTab) {
          urlbarInput.focus();
          urlbarInput.select();
          return;
      }
 
-     armed = true;
+     editingSession.newTab = true;
      viewWasOpen = false;
 
      // Cancel stale queries/results before using Firefox's input path to
@@ -507,7 +507,7 @@
 
      // With zero-prefix suggestions disabled, typing opens the view. Preserve
      // the caret/selection so the next character doesn't replace existing text.
-     if (armed && isOpen && !viewWasOpen && document.activeElement !== urlbarInput) {
+     if (editingSession.newTab && isOpen && !viewWasOpen && document.activeElement !== urlbarInput) {
          urlbarInput.focus();
      }
 
@@ -556,7 +556,7 @@
  // Escape cancels. Enter belongs to Firefox: it may confirm a search mode
  // without navigating, so it must not start a flow-completion timer.
  document.addEventListener("keydown", event => {
-     if (armed && canHandleEscape(event)) {
+     if (editingSession?.newTab && canHandleEscape(event)) {
          endFlow({ revert: true, refocus: true });
      }
  });
@@ -619,7 +619,7 @@
      // runs after Firefox's native handling in the bubble phase.
      const inBar = urlbar.hasAttribute("focused") && document.activeElement === urlbarInput;
 
-     if (!armed && inBar && urlbar.matches(CENTERED_SELECTOR)) {
+     if (!editingSession?.newTab && inBar && urlbar.matches(CENTERED_SELECTOR)) {
          event.preventDefault();
          event.stopPropagation();
          endFlow({ revert: true });
@@ -647,7 +647,7 @@
      urlbarPopups.add(popup);
      pendingPopups.add(popup);
 
-     if (armed || centeredAtMouseDown || urlbar.matches(CENTERED_SELECTOR)) {
+     if (editingSession?.newTab || centeredAtMouseDown || urlbar.matches(CENTERED_SELECTOR)) {
          urlbar.setAttribute(HOLD_ATTR, "");
      }
 
