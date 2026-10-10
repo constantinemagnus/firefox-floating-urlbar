@@ -24,11 +24,11 @@ PROFILE=""
 
 while (( $# > 0 )); do
     case "$1" in
-        -p|--profile) [[ $# -ge 2 ]] || die "$1 needs a value"; PROFILE="$2"; shift 2 ;;
-        --root)       [[ $# -ge 2 ]] || die "$1 needs a value"; PROFILE_ROOT="$2"; shift 2 ;;
+        -p|--profile) [[ -n "${2:-}" ]] || die "$1 needs a nonempty value"; PROFILE="$2"; shift 2 ;;
+        --root)       [[ -n "${2:-}" ]] || die "$1 needs a nonempty value"; PROFILE_ROOT="$2"; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         -*)           die "Unknown option: $1 (see --help)" ;;
-        *)            PROFILE="$1"; shift ;;
+        *)            [[ -n "$1" ]] || die "Profile directory must not be empty"; PROFILE="$1"; shift ;;
     esac
 done
 
@@ -43,6 +43,8 @@ if [[ -z "$PROFILE" ]]; then
 fi
 
 [[ -d "$PROFILE" ]] || die "Profile does not exist: $PROFILE"
+PROFILE="$(cd -- "$PROFILE" && pwd -P)"
+require_profile_destinations "$PROFILE"
 
 RUNNING=0
 if firefox_running; then
@@ -65,7 +67,7 @@ remove_installed() {
     # i.e. it was edited locally.
     if [[ ! -f "$original" ]] || ! cmp -s "$installed" "$original"; then
         local backup
-        backup="$(backup_file "$installed")"
+        backup="$(backup_file "$installed")" || return 1
         echo "  backed up locally modified file to $(basename "$backup")"
     fi
 
@@ -81,7 +83,9 @@ if (( RUNNING == 0 )); then
     clear_startup_cache "$PROFILE" || true
 fi
 
-rm -f "$SAVED_PROFILE_FILE"
+if saved="$(load_saved_profile)" && [[ "$saved" -ef "$PROFILE" ]]; then
+    rm -f -- "$SAVED_PROFILE_FILE"
+fi
 
 cat <<'NOTES'
 

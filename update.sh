@@ -32,11 +32,11 @@ while (( $# > 0 )); do
         --choose)  CHOOSE=1; shift ;;
         -h|--help) usage; exit 0 ;;
         -p|--profile|--root)
-            [[ $# -ge 2 ]] || die "$1 needs a value"
+            [[ -n "${2:-}" ]] || die "$1 needs a nonempty value"
             if [[ "$1" == --root ]]; then HAS_ROOT_ARG=1; else HAS_PROFILE_ARG=1; fi
             PASSTHROUGH+=("$1" "$2"); shift 2 ;;
         -*) die "Unknown option: $1 (see --help)" ;;
-        *) HAS_PROFILE_ARG=1; PASSTHROUGH+=("$1"); shift ;;
+        *) [[ -n "$1" ]] || die "Profile directory must not be empty"; HAS_PROFILE_ARG=1; PASSTHROUGH+=("$1"); shift ;;
     esac
 done
 
@@ -59,6 +59,8 @@ UPSTREAM_REV="$(git rev-parse '@{u}')"
 
 if [[ "$CURRENT_REV" == "$UPSTREAM_REV" ]]; then
     echo "Already up to date."
+elif git merge-base --is-ancestor "$UPSTREAM_REV" "$CURRENT_REV"; then
+    die "Local branch is ahead of upstream; no update installed. Run ./install.sh to install your current revision."
 else
     echo
     echo "New commits:"

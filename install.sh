@@ -25,11 +25,11 @@ PROFILE=""
 
 while (( $# > 0 )); do
     case "$1" in
-        -p|--profile) [[ $# -ge 2 ]] || die "$1 needs a value"; PROFILE="$2"; shift 2 ;;
-        --root)       [[ $# -ge 2 ]] || die "$1 needs a value"; PROFILE_ROOT="$2"; shift 2 ;;
+        -p|--profile) [[ -n "${2:-}" ]] || die "$1 needs a nonempty value"; PROFILE="$2"; shift 2 ;;
+        --root)       [[ -n "${2:-}" ]] || die "$1 needs a nonempty value"; PROFILE_ROOT="$2"; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         -*)           die "Unknown option: $1 (see --help)" ;;
-        *)            PROFILE="$1"; shift ;;
+        *)            [[ -n "$1" ]] || die "Profile directory must not be empty"; PROFILE="$1"; shift ;;
     esac
 done
 
@@ -48,6 +48,8 @@ if [[ -z "$PROFILE" ]]; then
 fi
 
 require_autoconfig_profile "$PROFILE"
+PROFILE="$(cd -- "$PROFILE" && pwd -P)"
+require_profile_destinations "$PROFILE"
 
 RUNNING=0
 if firefox_running; then
@@ -70,7 +72,7 @@ echo "  Profile: $PROFILE"
 echo
 
 if (( RUNNING == 0 )); then
-    clear_startup_cache "$PROFILE" || echo "No startup cache found at the usual locations. If the script doesn't load, clear it in about:support."
+    clear_startup_cache "$PROFILE" || echo "Startup cache not cleared automatically. Clear it in about:support if changes do not appear."
 else
     echo "After closing Firefox, clear the startup cache (about:support > Clear startup cache) and reopen."
 fi

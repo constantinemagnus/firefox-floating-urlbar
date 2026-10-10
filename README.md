@@ -10,6 +10,8 @@ It is a small [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user 
   <img src="assets/demo.gif" alt="firefox-floating-urlbar demo" width="800">
 </p>
 
+The demo shows animation without dimming; current defaults are animation off and dimming on.
+
 ## Behaviour
 
 | Action | Result |
@@ -45,7 +47,9 @@ cd firefox-floating-urlbar
 ./install.sh
 ```
 
-The installer finds your Firefox profiles, preselects the default one, copies the two files into `chrome/JS` and `chrome/CSS`, and keeps a timestamped backup of any file it would overwrite. You can pass a profile folder directly: `./install.sh --profile /path/to/profile`.
+The installer finds your Firefox profiles, preselects the default one, copies the two files into `chrome/JS` and `chrome/CSS`, and keeps timestamped backups when existing files differ. You can pass a profile folder directly: `./install.sh --profile /path/to/profile`. Restart Firefox afterward; if changes do not appear, clear the startup cache in `about:support`.
+
+The scripts refuse linked files, special files, and symlinked `chrome` directories. Automatic cache cleanup only removes a real `startupCache` directory inside the selected profile; clear external cache locations through `about:support`.
 
 The included installer currently supports Linux. Windows and macOS users can use the manual steps below.
 
@@ -61,7 +65,9 @@ The included installer currently supports Linux. Windows and macOS users can use
 ./update.sh
 ```
 
-It fetches first, shows the new commits and changed files, and asks before applying exactly that revision. It refuses to run if you have local edits in the repo. Pass `--yes` to skip the prompt, or `--choose` to pick a different profile. Explicit `--profile` or `--root` arguments take precedence over the saved profile.
+It fetches first, shows the new commits and changed files, and asks before applying exactly that revision and running the installer again. It refuses to run if tracked files have local edits. Pass `--yes` to skip the prompt, or `--choose` to pick a different profile. Explicit `--profile` or `--root` arguments take precedence over the saved profile.
+
+If your branch is ahead of upstream, updating stops without installing. Run `./install.sh` directly to install your local revision.
 
 ## Uninstall
 
@@ -69,7 +75,7 @@ It fetches first, shows the new commits and changed files, and asks before apply
 ./uninstall.sh
 ```
 
-Removes the two files (keeping a backup of any you edited) and never touches Firefox's `prefs.js`. If you ran an older version of this script, open `about:config` once and check that `browser.urlbar.openintab` is what you expect; reset it if you never set it yourself.
+Removes the two files (backing up installed files that differ from the repository copies) and never touches Firefox's `prefs.js`. Restart Firefox afterward; if the old behavior persists, clear the startup cache in `about:support`. If you ran an older version of this script, open `about:config` once and check that `browser.urlbar.openintab` is what you expect; reset it if you never set it yourself.
 
 ## Preferences (about:config, optional)
 

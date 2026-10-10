@@ -166,6 +166,8 @@ choose_profile() {
         die "Invalid selection."
     fi
 
+    # PROFILE is the result consumed by callers of this sourced library.
+    # shellcheck disable=SC2034
     PROFILE="${paths[$((choice - 1))]}"
 }
 
@@ -210,6 +212,7 @@ save_profile() {
     local absolute
     absolute="$(cd -- "$1" && pwd -P)" || die "Profile does not exist: $1"
     mkdir -p "$CONFIG_DIR"
+    require_file_destination "$SAVED_PROFILE_FILE"
     printf '%s\n' "$absolute" > "$SAVED_PROFILE_FILE"
 }
 
@@ -227,6 +230,30 @@ load_saved_profile() {
 # File helpers
 # ---------------------------------------------------------------
 
+# Refuse links and special files before any backup or destructive operation.
+# Multiple hard links may refer to user files outside the selected profile.
+require_file_destination() {
+    local dest="$1" links
+    [[ ! -L "$dest" && ( ! -e "$dest" || -f "$dest" ) ]] ||
+        die "Unsupported destination (expected an unlinked regular file): $dest"
+    if [[ -f "$dest" ]]; then
+        links="$(stat -c %h -- "$dest")" || die "Cannot inspect destination: $dest"
+        [[ "$links" == 1 ]] || die "Refusing hardlinked destination: $dest"
+    fi
+}
+
+# PROFILE is resolved physically by callers; its chrome subdirectories must
+# not redirect writes or removals outside that profile. Check both files first.
+require_profile_destinations() {
+    local profile="$1" dir
+    for dir in "$profile/chrome" "$profile/chrome/JS" "$profile/chrome/CSS"; do
+        [[ ! -L "$dir" && ( ! -e "$dir" || -d "$dir" ) ]] ||
+            die "Unsupported destination directory: $dir"
+    done
+    require_file_destination "$profile/chrome/JS/replace-new-tab.uc.js"
+    require_file_destination "$profile/chrome/CSS/firefox-floating-urlbar.uc.css"
+}
+
 backup_file() {
     local file="$1" backup
     # Reserve the name atomically; timestamps alone collide on repeated runs.
@@ -239,38 +266,31 @@ backup_file() {
 copy_with_backup() {
     local src="$1" dest="$2"
 
+    require_file_destination "$dest"
     if [[ -f "$dest" ]] && ! cmp -s "$src" "$dest"; then
         local backup
-        backup="$(backup_file "$dest")"
+        backup="$(backup_file "$dest")" || return 1
         echo "  Backed up existing file to: $(basename "$backup")"
     fi
 
-    cp "$src" "$dest"
+    cp -- "$src" "$dest" || return 1
     echo "  installed $(basename "$dest")"
 }
 
-# Best-effort only: removes the startup cache at the usual locations. The cache
-# lives in the profile's local-data folder, which varies by install type, so
-# about:support > "Clear startup cache" is still the reliable method.
+# Only remove a cache directly inside the physically resolved profile. External
+# local-data paths cannot be identified safely from the profile basename.
+# about:support > "Clear startup cache" handles those locations.
 # Only call while Firefox is closed.
 clear_startup_cache() {
-    local profile_name
-    profile_name="$(basename "$1")"
+    local profile dir
+    profile="$(cd -- "$1" && pwd -P)" || return 1
+    dir="$profile/startupCache"
+    [[ ! -L "$dir" && -d "$dir" ]] || return 1
 
-    local candidates=(
-        "$HOME/.cache/mozilla/firefox/$profile_name/startupCache"
-        "$HOME/.var/app/org.mozilla.firefox/cache/mozilla/firefox/$profile_name/startupCache"
-        "$HOME/Library/Caches/Firefox/Profiles/$profile_name/startupCache"
-    )
-
-    local dir cleared=1
-    for dir in "${candidates[@]}"; do
-        if [[ -d "$dir" ]]; then
-            rm -rf "$dir"
-            echo "Cleared startup cache: $dir"
-            cleared=0
-        fi
-    done
-
-    return "$cleared"
+    if rm -rf -- "$dir" && [[ ! -e "$dir" && ! -L "$dir" ]]; then
+        echo "Cleared startup cache: $dir"
+        return 0
+    fi
+    warn "Could not clear startup cache: $dir"
+    return 1
 }
