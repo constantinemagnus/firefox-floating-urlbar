@@ -179,7 +179,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
                 return parentController.openSERP(result.engine, input.value, where, !!result.inBackground, browserId);
             }
             const options = { loadRequest: { urlLoad: { url: input.value } }, where,
-                params: { avoidBrowserFocus: !!result.inBackground }, browserId };
+                params: { ...result.openParams, avoidBrowserFocus: !!result.inBackground }, browserId };
             if (where === "current") {
                 options.userTypedValue = this.userTypedValue = input.value;
             } else {
@@ -198,7 +198,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
         delete gURLBar.controller.parentController;
     }
     if (missingCommitAPI) delete gURLBar.controller.parentController;
-    configureUrlbar?.(gURLBar);
+    configureUrlbar?.(gURLBar, browser);
     let now = 100000;
     const timers = [];
     vm.runInNewContext(source, {
@@ -891,6 +891,75 @@ test("native explicit destinations are preserved", () => {
         const s = setup(); s.ctrlT(); s.type("https://target.example/");
         s.gURLBar.handleCommand(s.key("Enter", { openWhere }));
         assert.equal(s.loads[0].options.where, openWhere);
+    }
+});
+
+test("Alt+Enter modifiers preserve native background policy and blank-tab reuse", () => {
+    // Model the relevant Firefox 157 UrlbarChildController.whereToOpen and
+    // BrowserUtils.willLoadInBackground branches; this is not a Firefox UI test.
+    const willLoadInBackground = (where, params, preference) => {
+        if (where !== "tab" && where !== "tabshifted") return false;
+        const background = params.inBackground ?? (params.forceForeground ? false : preference);
+        return where === "tabshifted" ? !background : background;
+    };
+    for (const flow of ["native", "Ctrl+L", "Ctrl+T"]) {
+        for (const empty of [false, true]) {
+            for (const openInTab of [false, true]) {
+                for (const modifiers of [{}, { altKey: true }, { altKey: true, shiftKey: true }]) {
+                    for (const openParams of [
+                        { forceForeground: true }, // Normal native address-bar submission.
+                        { forceForeground: false }, // Let Firefox consult the background preference.
+                        { forceForeground: true, inBackground: true },
+                        { forceForeground: false, inBackground: false }
+                    ]) {
+                        let nativeWhere;
+                        const s = setup({ configureUrlbar(bar, browser) {
+                            nativeWhere = event => {
+                                let where = event.altKey ? (event.shiftKey ? "tabshifted" : "tab") : "current";
+                                if (openInTab) {
+                                    if (where === "current") where = "tab";
+                                    else if (where === "tab") where = "current";
+                                }
+                                if (where === "tab" && browser.selectedTab.isEmpty) where = "current";
+                                return where;
+                            };
+                            bar.controller.whereToOpen = nativeWhere;
+                            // Exercise both available hooks, including a nested destination lookup.
+                            bar._whereToOpen = event => bar.controller.whereToOpen(event);
+                        } });
+                        s.browser.selectedTab.isEmpty = empty;
+                        if (flow === "Ctrl+T") s.ctrlT();
+                        else if (flow === "Ctrl+L") s.key("l", { ctrlKey: true }, () => s.input.focus());
+                        else s.input.focus();
+                        s.type("https://target.example/");
+                        const event = s.key("Enter", modifiers);
+                        const nativeDestination = nativeWhere(event);
+                        const expected = flow === "Ctrl+T" && !empty && nativeDestination === "current"
+                            ? "tab" : nativeDestination;
+                        const context = JSON.stringify({ flow, empty, openInTab, modifiers, openParams });
+                        assert.equal(s.gURLBar._whereToOpen(event), expected, context);
+                        s.gURLBar.handleNavigation({ event, defer: true,
+                            result: { url: s.input.value, openParams } });
+                        s.key("Escape");
+                        s.flushNavigation();
+                        const { where, params } = s.loads[0].options;
+                        assert.equal(where, expected, context);
+                        assert.equal(s.gURLBar._whereToOpen(event), expected, context);
+                        for (const key of ["forceForeground", "inBackground"]) {
+                            assert.equal(params[key], openParams[key], context);
+                        }
+                        for (const preference of [false, true]) {
+                            assert.equal(willLoadInBackground(where, params, preference),
+                                willLoadInBackground(expected, openParams, preference), context);
+                            if (event.altKey && event.shiftKey && openParams.forceForeground &&
+                                openParams.inBackground === undefined) {
+                                assert.equal(willLoadInBackground(where, params, preference), true, context);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 });
 

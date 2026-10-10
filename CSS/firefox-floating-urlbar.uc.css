@@ -260,6 +260,47 @@
         }
     }
 
+    /* Experimental glass, off by default. Keep Firefox's two clipped halves
+     * as the only painted surfaces so the input, results and engine shortcuts
+     * share one tint without stacking translucent section backgrounds.
+     * The engine dropdown is a separate native XUL panel; leave it native.
+     * Unsupported CSS blur, reduced transparency and forced colors stay opaque. */
+    /* Firefox 137+ uses -moz-pref() media queries for live preference changes.
+     * The older (-moz-bool-pref: "...") syntax is no longer supported. */
+    @media -moz-pref("uc.floatingurlbar.glass") and
+        (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
+        @supports (backdrop-filter: blur(12px)) {
+            #urlbar[floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold]) {
+                --floatingurlbar-glass-background: color-mix(
+                    in srgb, var(--toolbar-field-background-color-focus, Field) 88%, transparent
+                );
+                --floatingurlbar-glass-border: color-mix(
+                    in srgb, var(--toolbar-field-text-color-focus, FieldText) 20%, transparent
+                );
+
+                > :is(#urlbar-background, .urlbar-background),
+                > .urlbarView > .urlbarView-background {
+                    background: var(--floatingurlbar-glass-background) !important;
+                    border-color: var(--floatingurlbar-glass-border) !important;
+                    backdrop-filter: blur(12px) !important;
+                }
+
+                /* Retain Firefox's row/button hover and selection colors. */
+                > .urlbar-input-container,
+                > .urlbarView,
+                > .urlbarView :is(
+                    .urlbarView-body-outer,
+                    .urlbarView-body-inner,
+                    .search-one-offs,
+                    .search-panel-one-offs,
+                    .search-panel-one-offs-container
+                ) {
+                    background: transparent !important;
+                }
+            }
+        }
+    }
+
     @media not -moz-pref("uc.floatingurlbar.animate") {
         #urlbar[floatingurlbar-active] > .urlbarView {
             transition: none !important;

@@ -7,10 +7,8 @@ It is a small [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user 
 ## Demo
 
 <p align="center">
-  <img src="assets/demo.gif" alt="firefox-floating-urlbar demo" width="800">
+  <img src="assets/demo.webp" alt="firefox-floating-urlbar demo" width="800">
 </p>
-
-The demo shows animation without dimming; current defaults are animation off and dimming on.
 
 ## Behaviour
 
@@ -85,6 +83,7 @@ Removes the two files (backing up installed files that differ from the repositor
 | `uc.floatingurlbar.debug` | `false` | Log what the script is doing to the Browser Console (Ctrl+Shift+J) |
 | `uc.floatingurlbar.animate` | `false` | CSS-only toggle: enable the previous 0.3-second position/width animation |
 | `uc.floatingurlbar.dim` | `true` | CSS-only toggle: dim the background by 35% during floating sessions |
+| `uc.floatingurlbar.glass` | `false` | Experimental CSS-only toggle: translucent floating input, suggestions, and engine shortcuts |
 
 Create these preferences as **Boolean** values in `about:config` to override
 their defaults. Set `uc.floatingurlbar.animate` to `true` to enable animation, or
@@ -105,6 +104,16 @@ This optional strength adjustment accepts a number from `0` to `1` (opaque
 black); use the Boolean preference to enable or disable dimming. Ordinary
 address-bar clicks never enable dimming. Restart Firefox and clear the startup
 cache after changing the stylesheet, as described in the installation steps.
+
+### Optional glass appearance
+
+For a translucent URL bar with background blur, create the Boolean
+preference `uc.floatingurlbar.glass` in `about:config` and set it to
+`true`. Set it to `false` to restore the default opaque appearance.
+
+<p align="center">
+  <img src="assets/glass_look.png" alt="Floating Firefox URL bar with the optional glass appearance" width="800">
+</p>
 
 ## Other URL bar tweaks
 
@@ -147,6 +156,12 @@ menus. Test animation with dimming on and off for transient shadows, including
 when suggestions first open or close. Check reduced motion on and off.
 On `about:preferences`, test blank space/text and controls separately; dismissal
 must preserve each control's normal behavior.
+
+For experimental glass, compare light/dark themes with suggestions shown and
+hidden, the engine-shortcut row, and the native engine dropdown. Toggle glass
+on/off and reset it without restarting, including while the panel is open. Check the
+opaque fallback with glass unset/false, reduced transparency, and forced colors;
+verify actual blur on a desktop Firefox with hardware acceleration.
 
 ## License and attribution
 
