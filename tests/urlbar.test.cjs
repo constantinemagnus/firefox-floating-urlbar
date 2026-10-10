@@ -527,6 +527,37 @@ test("old cancellation and blur callbacks cannot dismiss a newer session", () =>
     assert.equal(s.gURLBar.revertCalls, 0);
 });
 
+test("blur cleanup waits for Firefox to clear focus, then cancels only once", () => {
+    for (const recentBarClick of [false, true]) {
+        const s = setup(); s.ctrlT(); s.type("abandoned edits"); s.view(true);
+        if (recentBarClick) s.window.emit("mousedown", { target: s.input });
+        // Firefox may clear its focused attribute after dispatching blur.
+        s.input.emit("blur");
+        assert.equal(s.active(), true);
+        s.bar.removeAttribute("focused"); s.view(false);
+        s.advance(recentBarClick ? 399 : 100);
+        assert.equal(s.active(), recentBarClick);
+        assert.equal(s.where({}), "tab");
+        s.advance(10000);
+        assert.equal(s.active(), false);
+        assert.equal(s.where({}), "current");
+        assert.equal(s.gURLBar.revertCalls, 1);
+    }
+});
+
+test("tab selection completes cleanup without reverting or refocusing", () => {
+    const s = setup(); s.ctrlT(); s.type("pending edits"); s.page.focus();
+    const focusCalls = s.page.focusCalls;
+    s.browser.tabContainer.emit("TabSelect");
+    s.browser.tabContainer.emit("TabSelect");
+    s.gURLBar.search("native edits"); s.advance(10000);
+    assert.equal(s.active(), false);
+    assert.equal(s.where({}), "current");
+    assert.equal(s.gURLBar.revertCalls, 0);
+    assert.equal(s.page.focusCalls, focusCalls);
+    assert.equal(s.input.value, "native edits");
+});
+
 test("the older input load API also commits only the originating session", () => {
     const s = setup({ legacy: true }); s.ctrlT(); s.type("https://legacy.example/");
     s.gURLBar.handleCommand(s.key("Enter"));
@@ -620,6 +651,28 @@ test("Escape cancels both floating activation modes and IME Escape remains nativ
     }
 });
 
+test("Escape preserves native handling before Ctrl+T cleanup and captures Ctrl+L", () => {
+    for (const newTab of [false, true]) {
+        const s = setup();
+        if (newTab) s.ctrlT();
+        else s.key("l", { ctrlKey: true }, () => s.input.focus());
+        s.type("abandoned edits"); s.view(true);
+        let nativeCalls = 0;
+        const event = s.key("Escape", {}, () => {
+            nativeCalls++;
+            assert.equal(s.active(), true);
+            s.view(false);
+        });
+        assert.equal(nativeCalls, newTab ? 1 : 0);
+        assert.equal(!!event.defaultPrevented, !newTab);
+        assert.equal(s.active(), false);
+        assert.equal(s.input.value, s.page.currentURI.spec);
+        assert.equal(s.page.focusCalls, 1);
+        s.advance(10000);
+        assert.equal(s.gURLBar.revertCalls, 1);
+    }
+});
+
 test("another window's submissions cannot complete this session", () => {
     const a = setup(), b = setup();
     a.ctrlT(); a.type("first query");
@@ -676,6 +729,45 @@ test("a visible menu preserves the flow, then Escape dismisses it", () => {
         assert.equal(s.active(), false);
         assert.equal(s.input.value, "https://example.com");
         assert.equal(s.where({}), "current");
+    }
+});
+
+test("popup-close callbacks cannot clean up a newer editing session", () => {
+    const s = setup(); s.ctrlT();
+    const popup = { anchorNode: s.input };
+    s.window.emit("mousedown", { target: s.input });
+    s.window.emit("popupshowing", { target: popup });
+    s.window.emit("popupshown", { target: popup });
+    s.page.focus();
+    s.window.emit("popuphidden", { target: popup });
+    s.key("l", { ctrlKey: true }, () => s.input.focus());
+    s.type("new edits");
+    s.advance(10000);
+    assert.equal(s.active(), true);
+    assert.equal(s.where({}), "current");
+    assert.equal(s.input.value, "new edits");
+    assert.equal(s.gURLBar.revertCalls, 0);
+});
+
+test("closing or cancelling one popup keeps the other popup's hold and intent", () => {
+    for (const firstShown of [false, true]) {
+        const s = setup(); s.ctrlT();
+        const first = { anchorNode: s.input }, second = { anchorNode: s.input };
+        s.window.emit("mousedown", { target: s.input });
+        s.window.emit("popupshowing", { target: first });
+        if (firstShown) s.window.emit("popupshown", { target: first });
+        s.window.emit("popupshowing", { target: second });
+        s.window.emit("popupshown", { target: second });
+        s.page.focus();
+        if (firstShown) s.window.emit("popuphidden", { target: first });
+        s.advance(1000);
+        assert.equal(s.active(), true);
+        assert.equal(s.bar.hasAttribute("floatingurlbar-hold"), true);
+        assert.equal(s.where({}), "tab");
+        s.window.emit("popuphidden", { target: second }); s.advance(10000);
+        assert.equal(s.active(), false);
+        assert.equal(s.where({}), "current");
+        assert.equal(s.gURLBar.revertCalls, 1);
     }
 });
 
