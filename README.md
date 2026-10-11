@@ -1,8 +1,8 @@
 # firefox-floating-urlbar
 
-A Zen-style floating URL bar for Firefox. Press **Ctrl+T**, type a URL or search, and press **Enter** to open it directly in a **new tab** — without leaving a blank tab in between. **Ctrl+L** also uses the floating URL bar while keeping Firefox's normal current-tab navigation.
+A Zen-style floating URL bar for Firefox. Press Ctrl+T, type a URL or search, and press Enter to open it in a new tab without creating a blank tab first. Ctrl+L opens the same floating bar and navigates in the current tab as usual.
 
-It is a small [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user script plus a stylesheet. It does not replace your theme or require an extension.
+It uses a small [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user script and a stylesheet. It does not replace your theme or require an extension.
 
 ## Demo
 
@@ -16,24 +16,22 @@ It is a small [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user 
 | --- | --- |
 | Ctrl+T (Cmd+T on macOS) | Centred URL bar; Enter opens the result in a new tab |
 | Escape / click away | Cancels and restores the current page's address |
-| Ctrl+L (Cmd+L on macOS) | Centred as well, but navigates in the **current** tab as usual |
-| Clicking the normal address field | Stays in the toolbar; Firefox's suggestions, search, and editing work normally |
-| Clicking inside the floating address field | Keeps the floating position and the current Ctrl+T/Ctrl+L navigation intent |
-| F6 / Alt+D | Unchanged Firefox behavior; does not activate floating |
+| Ctrl+L (Cmd+L on macOS) | Centred URL bar; Enter navigates in the current tab as usual |
+| Clicking the normal address field | Stays in the toolbar without dimming; Firefox's suggestions, search, and editing work normally |
+| Clicking inside the floating address field | Keeps the bar floating and preserves Ctrl+T/Ctrl+L navigation behavior |
+| F6 / Alt+D | Normal Firefox behavior; does not open the floating bar |
 | `+` button, File → New Tab, Ctrl+N (Cmd+N on macOS) | Opens a normal tab or window with the URL bar in the toolbar |
 
-Only Ctrl+T and Ctrl+L activate floating. It appears and returns to the toolbar
-without sliding by default. During floating, the background is dimmed by 35% by default,
-including when suggestions are disabled. The input, suggestions, and menus stay
-above the dimming; clicking away still dismisses the floating bar.
+By default, the floating bar opens and closes without animation and dims the background by 35%, even when suggestions are disabled. The input, suggestions, and menus stay above the dimming.
 
 ## Requirements
 
-- Firefox with [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) already installed in your profile. This project does not install it for you.
-- A Firefox with CSS anchor positioning support. Without it the stylesheet does nothing and the bar keeps its normal position.
-- Tested on **Firefox 157.0 on Linux**.
+- Firefox with [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) already installed in your profile. This project's installer does not install it.
+- Firefox with CSS anchor positioning support. Without it, the stylesheet has no effect and the bar stays in its normal position.
+- Tested on Firefox 157.0 on Linux. Windows and macOS are untested.
+- The script relies on Firefox's internal URL bar APIs. If required APIs are missing, it logs a warning in the Browser Console and keeps Firefox's normal Ctrl+T behavior.
 
-> These files run with full browser privileges. Read them before installing, as you should with any user script.
+> These files run with full browser privileges. Read them before installing.
 
 ## Install
 
@@ -45,14 +43,11 @@ cd firefox-floating-urlbar
 ./install.sh
 ```
 
-The installer finds your Firefox profiles, preselects the default one, copies the two files into `chrome/JS` and `chrome/CSS`, and keeps timestamped backups when existing files differ. You can pass a profile folder directly: `./install.sh --profile /path/to/profile`. Restart Firefox afterward; if changes do not appear, clear the startup cache in `about:support`.
-
-The scripts refuse linked files, special files, and symlinked `chrome` directories. Automatic cache cleanup only removes a real `startupCache` directory inside the selected profile; clear external cache locations through `about:support`.
-
-The included installer currently supports Linux. Windows and macOS users can use the manual steps below.
+The installer preselects your default Firefox profile and keeps timestamped backups of differing files before copying into `chrome/JS` and `chrome/CSS`. To specify a profile, use `./install.sh --profile /path/to/profile`. Restart Firefox; if changes do not appear, clear the startup cache in `about:support`.
 
 ### Manual (any OS)
 
+Find your Firefox profile in about:support under Profile Folder (or Profile Directory), then open that folder.
 1. Copy `JS/replace-new-tab.uc.js` into your profile's `chrome/JS/` folder.
 2. Copy `CSS/firefox-floating-urlbar.uc.css` into your profile's `chrome/CSS/` folder.
 3. In Firefox, go to `about:support`, click **Clear startup cache**, and confirm the restart.
@@ -63,9 +58,7 @@ The included installer currently supports Linux. Windows and macOS users can use
 ./update.sh
 ```
 
-It fetches first, shows the new commits and changed files, and asks before applying exactly that revision and running the installer again. It refuses to run if tracked files have local edits. Pass `--yes` to skip the prompt, or `--choose` to pick a different profile. Explicit `--profile` or `--root` arguments take precedence over the saved profile.
-
-If your branch is ahead of upstream, updating stops without installing. Run `./install.sh` directly to install your local revision.
+Fetches and shows incoming commits and files, then asks before applying that revision and reinstalling. Stops if tracked files have local edits or your branch is ahead of upstream; use `./install.sh` to install a local revision. Pass `--yes` to skip confirmation or `--choose` to select another profile. Explicit `--profile` or `--root` arguments override the saved profile.
 
 ## Uninstall
 
@@ -73,26 +66,21 @@ If your branch is ahead of upstream, updating stops without installing. Run `./i
 ./uninstall.sh
 ```
 
-Removes the two files (backing up installed files that differ from the repository copies) and never touches Firefox's `prefs.js`. Restart Firefox afterward; if the old behavior persists, clear the startup cache in `about:support`. If you ran an older version of this script, open `about:config` once and check that `browser.urlbar.openintab` is what you expect; reset it if you never set it yourself.
+Removes the two files, backs up any that differ from the repository copies, and leaves Firefox's `prefs.js` untouched. Restart Firefox; if the old behavior persists, clear the startup cache in `about:support`. If you used an older uninstaller, check `browser.urlbar.openintab` in `about:config` and reset it if you never set it yourself.
 
 ## Preferences (about:config, optional)
 
 | Preference | Default | Meaning |
 | --- | --- | --- |
-| `uc.floatingurlbar.enabled` | `true` | Set to `false` to get Firefox's normal Ctrl+T back without uninstalling |
+| `uc.floatingurlbar.enabled` | `true` | Set to `false` to restore Firefox's normal Ctrl+T without uninstalling |
 | `uc.floatingurlbar.debug` | `false` | Log what the script is doing to the Browser Console (Ctrl+Shift+J) |
-| `uc.floatingurlbar.animate` | `false` | CSS-only toggle: enable the previous 0.3-second position/width animation |
-| `uc.floatingurlbar.dim` | `true` | CSS-only toggle: dim the background by 35% during floating sessions |
-| `uc.floatingurlbar.glass` | `false` | Experimental CSS-only toggle: translucent floating input, suggestions, and engine shortcuts |
+| `uc.floatingurlbar.animate` | `false` | CSS-only: enable the 0.3-second position/width animation |
+| `uc.floatingurlbar.dim` | `true` | CSS-only: dim the background by 35% while the bar is floating |
+| `uc.floatingurlbar.glass` | `false` | Experimental, CSS-only: translucent floating input, suggestions, and engine shortcuts with background blur |
 
-Create these preferences as **Boolean** values in `about:config` to override
-their defaults. Set `uc.floatingurlbar.animate` to `true` to enable animation, or
-`uc.floatingurlbar.dim` to `false` to disable dimming without editing CSS.
-Missing preferences use the defaults above. The system's reduced-motion
-preference always disables the animation.
+Create these preferences as **Boolean** values in `about:config` to change the defaults. The system's reduced-motion preference always disables animation.
 
-To adjust dimming, change `--floatingurlbar-dim-opacity` in
-`CSS/firefox-floating-urlbar.uc.css`, or override it in `userChrome.css`:
+To adjust dimming, change `--floatingurlbar-dim-opacity` in `CSS/firefox-floating-urlbar.uc.css`, or override it in `userChrome.css`:
 
 ```css
 :root {
@@ -100,16 +88,11 @@ To adjust dimming, change `--floatingurlbar-dim-opacity` in
 }
 ```
 
-This optional strength adjustment accepts a number from `0` to `1` (opaque
-black); use the Boolean preference to enable or disable dimming. Ordinary
-address-bar clicks never enable dimming. Restart Firefox and clear the startup
-cache after changing the stylesheet, as described in the installation steps.
+Use a number from `0` to `1` (opaque black). Using `userChrome.css` requires `toolkit.legacyUserProfileCustomizations.stylesheets` to be enabled. Restart Firefox and clear the startup cache after stylesheet changes.
 
 ### Optional glass appearance
 
-For a translucent URL bar with background blur, create the Boolean
-preference `uc.floatingurlbar.glass` in `about:config` and set it to
-`true`. Set it to `false` to restore the default opaque appearance.
+Set `uc.floatingurlbar.glass` to `true` in `about:config` to enable the translucent appearance.
 
 <p align="center">
   <img src="assets/glass_look.png" alt="Floating Firefox URL bar with the optional glass appearance" width="800">
@@ -117,51 +100,25 @@ preference `uc.floatingurlbar.glass` in `about:config` and set it to
 
 ## Other URL bar tweaks
 
-If you already use other CSS or scripts that change how the URL bar looks or behaves (centred or floating URL bar mods, theme packs, custom `urlbar` rules in `userChrome.css`), disable those parts first. Two things positioning the same element will fight, and the result can be a misplaced or half-sized bar.
+Other URL bar customizations may conflict with this stylesheet. Disable conflicting rules if the floating bar appears incorrectly.
 
-## How it works
-
-While a Ctrl+T flow is active in a window, a navigation Firefox would have loaded in the current tab is redirected to a new tab. This is done by wrapping Firefox's internal "where should this open" method on that window's URL bar, so no global preference is changed and other windows are unaffected. A blank current tab is reused rather than stacking another one.
-
-Those destination methods are internal to Firefox (`UrlbarInput._whereToOpen` and `UrlbarChildController.whereToOpen`). The script wraps each available method, carries submission intent through asynchronous result handling, and ends the session at navigation commit rather than search-mode selection. If no destination method is available, or required navigation/editing APIs are missing, it logs a warning in the Browser Console and leaves Firefox's own Ctrl+T alone.
 
 ## Troubleshooting
 
-- **Nothing changed after installing.** Clear the startup cache (`about:support` → *Clear startup cache*) and restart Firefox. Also confirm fx-autoconfig works by checking that other `.uc.js` scripts load.
-- **Ctrl+T behaves like normal Firefox.** Set `uc.floatingurlbar.debug` to `true` in `about:config`, restart, and open the Browser Console (Ctrl+Shift+J). A working install logs `[Replace New Tab] wrapped whereToOpen` (newer Firefox, including 157) or `wrapped _whereToOpen` (older Firefox), followed by `loaded`. Other messages in the console (Region, TopSites, Glean, experiments) come from Firefox itself and can be ignored. If you see a warning that Firefox exposes neither `gURLBar._whereToOpen` nor `gURLBar.controller.whereToOpen`, your Firefox has moved that method again; please open an issue with your Firefox version and the console output.
-- **The bar opens but isn't centred.** Firefox changed its URL bar markup. The selectors the stylesheet depends on are listed at the top of `CSS/firefox-floating-urlbar.uc.css`. Please open an issue with your Firefox version.
-- **Enter opens in the current tab.** Turn on `uc.floatingurlbar.debug` and include the console output in an issue.
+- **Nothing changed after installing.** Clear the startup cache (`about:support` → *Clear startup cache*) and restart Firefox. Also make sure fx-autoconfig is installed correctly.
+- **Ctrl+T behaves normally or Enter opens in the current tab.** Enable debug logging as described below.
+- **The bar isn't centred.** Disable conflicting URL bar tweaks. If the problem persists, open an issue with your Firefox version.
 
-Debug startup messages also list installed submission and commit hooks, plus
-the fallback-navigation hook when available. Include these with your Firefox
-version when reporting navigation problems; they show which internal APIs the
-script found, but cannot guarantee those APIs still behave as expected.
+To debug, set `uc.floatingurlbar.debug` to `true` in `about:config`, restart, and open the Browser Console (Ctrl+Shift+J). Include the script's messages and your Firefox version when opening an issue.
 
 ## Development checks
-
-There is no build step. Run the regression tests with Node.js and Bash:
 
 ```bash
 node --test tests/urlbar.test.cjs
 bash tests/shell.test.sh
 ```
 
-The URL-bar tests mock Firefox events and timers. Shell tests use temporary profiles and mocked Git; they do not update your real profile or repository. Also verify shortcuts, cancellation, search-engine selection, and popup alignment in Firefox, including with zero-prefix suggestions disabled.
-
-Check Ctrl+T/Ctrl+L navigation and click-away for flashes or toolbar movement.
-Verify normal address-bar clicks, F6, and Alt+D stay in the toolbar, while clicks
-inside the floating bar preserve it. Check dimming with its preference absent,
-`true`, and `false`, with suggestions enabled and disabled, and during engine
-menus. Test animation with dimming on and off for transient shadows, including
-when suggestions first open or close. Check reduced motion on and off.
-On `about:preferences`, test blank space/text and controls separately; dismissal
-must preserve each control's normal behavior.
-
-For experimental glass, compare light/dark themes with suggestions shown and
-hidden, the engine-shortcut row, and the native engine dropdown. Toggle glass
-on/off and reset it without restarting, including while the panel is open. Check the
-opaque fallback with glass unset/false, reduced transparency, and forced colors;
-verify actual blur on a desktop Firefox with hardware acceleration.
+Tests use mocks and temporary files. Visual changes still require testing in Firefox.
 
 ## License and attribution
 
