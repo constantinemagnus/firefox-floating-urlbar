@@ -1,6 +1,6 @@
 # Firefox Floating Urlbar
 
-A Zen-style floating URL bar for Firefox. Ctrl+T opens a floating bar without creating a blank tab; type a URL or search and press Enter to open the result in a new tab. Ctrl+L opens the same bar for navigation in the current tab.
+A Zen-style floating URL bar for Firefox. Ctrl+T opens a centered floating bar without creating a blank tab; type a URL or search and press Enter to open the result in a new tab. Ctrl+L opens the same bar for navigation in the current tab.
 
 It uses an [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user script and a stylesheet. No extension or theme replacement is required.
 
