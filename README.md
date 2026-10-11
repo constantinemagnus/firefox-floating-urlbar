@@ -47,12 +47,16 @@ The installer preselects your default Firefox profile and copies the files into 
 
 Restart Firefox. If changes do not appear, clear the startup cache in `about:support`.
 
-### Manual (any OS)
+#### Manual (any OS)
 
-Open `about:support` and find **Profile Folder** (or **Profile Directory**). Open that folder, then:
+**Prerequisite:** Install [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) first. This project depends on it to load custom JavaScript in Firefox. Simply copying the files below will not work without it.
 
-1. Copy `JS/replace-new-tab.uc.js` into `chrome/JS/`.
-2. Copy `CSS/firefox-floating-urlbar.uc.css` into `chrome/CSS/`.
+Once fx-autoconfig is installed:
+
+1. Open `about:support` in Firefox and locate **Profile Folder** (or **Profile Directory**).
+2. Open that folder and copy:
+   - `JS/replace-new-tab.uc.js` → `chrome/JS/`
+   - `CSS/firefox-floating-urlbar.uc.css` → `chrome/CSS/`
 3. In `about:support`, click **Clear startup cache** and confirm the restart.
 
 ## Update
