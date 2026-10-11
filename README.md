@@ -15,7 +15,7 @@ It uses an [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user scr
 | Action | Result |
 | --- | --- |
 | Ctrl+T (Cmd+T on macOS) | Centred URL bar; Enter opens the result in a new tab |
-| Escape / click away | Cancels and restores the current page's address |
+| Escape / click away | Cancels floating URL-bar editing, discards what you typed, and restores the current page's address |
 | Ctrl+L (Cmd+L on macOS) | Centred URL bar; Enter navigates in the current tab |
 | Click the normal address field | Stays in the toolbar without dimming; suggestions, search, and editing work normally |
 | Click inside the floating address field | Keeps the bar floating with the same Ctrl+T/Ctrl+L navigation behavior |
@@ -73,7 +73,7 @@ Pass `--yes` to skip confirmation or `--choose` to select another profile. Expli
 
 The uninstaller removes the two files, backing up any that differ from the repository copies. It leaves Firefox's `prefs.js` untouched.
 
-Restart Firefox. If the old behavior persists, clear the startup cache in `about:support`. If you used an older uninstaller, check `browser.urlbar.openintab` in `about:config` and reset it if you never set it yourself.
+Restart Firefox. If the old behavior persists, clear the startup cache in `about:support`. If you used an older version of the script, check `browser.urlbar.openintab` in `about:config` and reset it if you never set it yourself.
 
 ## Preferences (about:config, optional)
 
