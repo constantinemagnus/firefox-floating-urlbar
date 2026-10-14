@@ -125,21 +125,17 @@ Set `uc.floatingurlbar.glass` to `true` in `about:config` for the translucent ap
 
 ## Compact mode
 
-Set `uc.floatingurlbar.compact` to `true` to put the address field and menu above expanded vertical tabs on either side of the window. Collapsed sidebars, horizontal tabs, fullscreen and toolbar customization use the normal layout.
+Set `uc.floatingurlbar.compact` to `true` to put the address field and menu above expanded vertical tabs on either side. Collapsed sidebars, horizontal tabs, fullscreen and toolbar customization use the normal layout.
 
-In **Customize Toolbar**, place buttons before the address field to show them in the compact header, in the same order. This includes downloads and pinned extensions; extra buttons wrap onto another row. Buttons after the field stay in the hover toolbar, except the native **Extensions** button, which joins the header from either position in the navigation toolbar. Firefox's setting to hide that button is respected.
+In **Customize Toolbar**, move buttons (including pinned extensions) before the address field to show them in the compact header. Other buttons stay in the toolbar revealed by hovering near the top edge. The native **Extensions** button joins the header unless hidden in Firefox's settings; unpinned extensions remain available in its panel. The overflow button is hidden.
 
-Leave extensions unpinned to use their actions from the native Extensions panel. Newly pinned extensions appear after the address field by default; move them before it for direct access in the compact header.
+Click the address field to expand it beside the sidebar and navigate in the current tab; click empty sidebar space to dismiss editing. Ctrl+T, Ctrl+L and Ctrl+K use the centered bar. In compact mode, Ctrl+K uses URL-bar search even if a separate search bar is configured.
 
-Clicking the address field or opening suggestions expands it beside the sidebar to 575px, limited by the window width, for current-tab navigation. Click empty sidebar space to dismiss editing. Automatic focus in an empty new tab keeps the field compact. Ctrl+T, Ctrl+L and Ctrl+K use the centered bar. Ctrl+K uses URL-bar search even if a separate search bar is configured; switching back to the normal layout restores its native behavior.
+Use the centered bar to change search engines or access site information and permissions, including warnings and sharing indicators; these controls are hidden in the sidebar field. Selected engines remain active. Right-side controls appear on hover or focus and while their popup is open.
 
-The sidebar field hides the search-engine dropdown and engine-name chip. Choose or exit an engine in the centered bar; hiding the sidebar control leaves any selected engine unchanged. Left-side site information and permission icons, including warnings and sharing indicators, stay hidden even on hover or focus; use Ctrl+L to access them in the centered bar. Native notification prompts keep their anchors. Right-side controls appear on hover or focus and stay visible while their popup is open.
+Pinned tabs resize automatically, scrolling at 40% of the window height. Set `uc.floatingurlbar.compact.pins.manual` to `true` to use Firefox's saved height and resize handle instead.
 
-Pinned tabs automatically grow and shrink to fit their rows, scrolling when the area reaches 40% of the window height. Set `uc.floatingurlbar.compact.pins.manual` to `true` for Firefox's saved height and native resize handle. Switching modes preserves the saved height.
-
-Hover near the top edge for 250ms to reveal the remaining toolbar and window controls. They stay visible for 300ms after the pointer leaves to allow small slips. The native menubar has its own themed background when revealed. On Windows and Linux, a right-hand compact sidebar moves the window controls to the left, with Close at the outer edge. macOS retains native placement.
-
-The overflow button is hidden in compact mode. Outside compact mode, Firefox handles it normally.
+Hover near the top edge to reveal the remaining toolbar and window controls. On Windows and Linux, a right-hand sidebar moves window controls to the left; macOS keeps native placement.
 
 ## Other URL bar tweaks
 
