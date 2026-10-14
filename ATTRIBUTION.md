@@ -37,6 +37,14 @@ associated with `uc.flex.move-urlbar-popup-to-center`. Floating background dimmi
 also adapts its `uc.flex.dim-urlbar-popup-backdrop` implementation, including the
 Firefox 157+ top-layer backdrop cutout.
 
+Compact-mode pinned-tab sizing follows FlexFox's separation of automatic
+content fitting and native manual resizing, with a window-relative height limit.
+Reference: https://github.com/yuuqilin/FlexFox/blob/main/chrome/components/uc-sidebar.css
+
+Window-control placement for right-hand compact sidebars uses FlexFox's CSS
+ordering approach, limited to Windows and Linux.
+Reference: https://github.com/yuuqilin/FlexFox/blob/main/chrome/components/uc-window-controls.css
+
 Original project:
 https://github.com/yuuqilin/FlexFox
 

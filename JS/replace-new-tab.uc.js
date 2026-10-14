@@ -32,12 +32,6 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  *
- * What this script does
- *   - Ctrl+T (Cmd+T on macOS) focuses the URL bar instead of opening a blank tab.
- *   - Enter then opens the URL or search in a NEW tab. Escape cancels.
- *   - Ctrl+L (Cmd+L on macOS) floats the bar with normal current-tab navigation.
- *   - The + button and File > New Tab are left alone: they open a normal blank tab.
- *
  * How it works
  *   While a "new tab" flow is active in THIS window, a navigation that Firefox
  *   would have loaded in the current tab is redirected to a new tab. This is done
@@ -55,11 +49,7 @@
  *   If no destination hook exists, or required navigation/editing APIs are
  *   missing, the script warns and leaves Firefox's Ctrl+T untouched.
  *
- * Preferences (about:config, optional)
- *   uc.floatingurlbar.enabled   (bool, default true)   false = Firefox's normal new tab.
- *   uc.floatingurlbar.debug     (bool, default false)  Log to the Browser Console (Ctrl+Shift+J).
- *   uc.floatingurlbar.animate   (bool, default false)  CSS-only position/width animation.
- *   uc.floatingurlbar.dim       (bool, default true)   CSS-only background dimming.
+ * Shortcuts, configuration and appearance preferences are documented in README.md.
  */
 
 (() => {
@@ -67,6 +57,7 @@
 
  const PREF_ENABLED = "uc.floatingurlbar.enabled";
  const PREF_DEBUG = "uc.floatingurlbar.debug";
+ const PREF_COMPACT = "uc.floatingurlbar.compact";
 
  // Older versions of this script overrode browser.urlbar.openintab and kept a
  // backup here. Restore it once if a previous session left it behind.
@@ -172,8 +163,10 @@
  // one is open the input loses focus and the results view closes, which would
  // otherwise cancel the flow and let the floating bar drop back to the toolbar.
  const urlbarPopups = new Set();
- const ACTIVE_ATTR = "floatingurlbar-active"; // explicitly activated by Ctrl+T or Ctrl+L
+ const ACTIVE_ATTR = "floatingurlbar-active"; // explicitly activated by Ctrl+T, Ctrl+L or URL-bar Ctrl+K
  const HOLD_ATTR = "floatingurlbar-hold";   // the CSS keeps the bar centred while this is set
+ const SIDEBAR_EDIT_ATTR = "floatingurlbar-sidebar-editing";
+ const CONTROLS_OPEN_ATTR = "floatingurlbar-controls-open";
  // Mirrors the CSS: the states in which the bar is floating.
  const CENTERED_SELECTOR = `[${ACTIVE_ATTR}]:is([focused], [popover-open], [${HOLD_ATTR}])`;
  // A blur this soon after a click ON the bar may be a menu starting to open
@@ -353,9 +346,8 @@
  // ---------------------------------------------------------------
 
  function onPreferencesClick(event) {
-     // Blank XUL areas use -moz-user-focus: ignore: unlike HTML backgrounds,
-     // they leave the floating input focused. Run after the click so controls
-     // that moved focus themselves, or handled the event, keep their behavior.
+     // Some Preferences backgrounds leave the floating input focused. Run
+     // after the click so controls that moved focus or handled it act first.
      if (event.button === 0 && !event.defaultPrevented &&
          urlbar.hasAttribute(ACTIVE_ATTR) && urlbarPopups.size === 0 &&
          document.activeElement === urlbarInput) {
@@ -364,6 +356,7 @@
  }
 
  function startFloating() {
+     urlbar.removeAttribute(SIDEBAR_EDIT_ATTR);
      if (!editingSession) {
          editingSession = { newTab: false, pendingNavigation: null };
      }
@@ -380,8 +373,7 @@
 
      floatingPreferencesDocument?.removeEventListener("click", onPreferencesClick);
      floatingPreferencesDocument = preferencesDocument;
-     // This listener exists only on the current Preferences document while
-     // floating is active; no window-wide click-away handler is needed.
+     // Track clicks only on the current Preferences document while floating.
      floatingPreferencesDocument?.addEventListener("click", onPreferencesClick);
  }
 
@@ -390,6 +382,7 @@
      floatingPreferencesDocument = null;
      urlbar.removeAttribute(ACTIVE_ATTR);
      urlbar.removeAttribute(HOLD_ATTR);
+     urlbar.removeAttribute(SIDEBAR_EDIT_ATTR);
      centeredAtMouseDown = false;
  }
 
@@ -521,18 +514,34 @@
  // keep working and open a normal blank tab.
  nativeNewTabKey.setAttribute("disabled", "true");
 
- // Let Firefox handle Ctrl/Cmd+L normally; only opt into floating. Switching
- // from Ctrl+T to Ctrl+L also restores current-tab navigation.
+ // Let Firefox handle Ctrl/Cmd+L and URL-bar Ctrl/Cmd+K normally; only opt into
+ // floating. Compact Ctrl+K bypasses a separate search bar; other layouts keep
+ // its native behavior. Both shortcuts restore current-tab navigation after Ctrl+T.
  window.addEventListener("keydown", event => {
      const accel = Services.appinfo.OS === "Darwin"
          ? event.metaKey && !event.ctrlKey
          : event.ctrlKey && !event.metaKey;
 
+     const shortcut = event.key.toLowerCase();
+     const separateSearchBar = document.getElementById("searchbar") || document.getElementById("searchbar-new");
+     const sidebar = document.getElementById("sidebar-container");
+     // The CSS anchor exists only while the compact layout is actually displayed.
+     const compactSearch = shortcut === "k" && separateSearchBar && sidebar &&
+         typeof gURLBar.searchModeShortcut === "function" &&
+         window.getComputedStyle(sidebar).anchorName === "--floatingurlbar-sidebar";
+     const searchInUrlbar = shortcut === "k" &&
+         (!separateSearchBar || compactSearch);
+
      if (accel && !event.altKey && !event.shiftKey &&
          !event.isComposing && event.keyCode !== 229 &&
-         event.key.toLowerCase() === "l" && shouldHandle()) {
+         (shortcut === "l" || searchInUrlbar) && shouldHandle()) {
          endFlow();
          startFloating();
+         if (compactSearch) {
+             event.preventDefault();
+             event.stopPropagation();
+             gURLBar.searchModeShortcut();
+         }
      }
  }, true);
 
@@ -630,18 +639,19 @@
  // Only the last popup's removal may release the floating bar or cancel edits.
  function untrackPopup(popup) {
      pendingPopups.delete(popup);
-     return urlbarPopups.delete(popup) && urlbarPopups.size === 0;
+     const removed = urlbarPopups.delete(popup);
+     if (urlbarPopups.size === 0) {
+         urlbar.removeAttribute(CONTROLS_OPEN_ATTR);
+     }
+     return removed && urlbarPopups.size === 0;
  }
 
  // Opening a menu can close the results view before the menu appears, so
  // remember whether the bar was floating at the moment of the click.
  //
- // There is deliberately no timeout: Firefox may build the menu
- // asynchronously before showing it. Instead the flag belongs to the input
- // that set it: any newer mouse click anywhere in the window or any key press
- // supersedes it, and it is cleared when the menu hides. So it can't survive
- // a click-away and later be mistaken for the origin of an unrelated popup
- // (e.g. a site permission prompt anchored to the URL bar).
+ // Firefox may build the menu asynchronously, so do not time out this flag.
+ // A newer mouse click, key press or menu dismissal clears it, preventing an
+ // unrelated popup from inheriting a previous click's floating state.
  window.addEventListener("mousedown", event => {
      const inBar = urlbar.contains(event.target);
      centeredAtMouseDown = inBar && urlbar.matches(CENTERED_SELECTOR);
@@ -652,8 +662,50 @@
      }
      if (inBar) {
          lastBarMouseDownAt = Date.now();
+         // Native focus also arrives after mouse-created tabs and can linger
+         // after cancellation. Only a deliberate field click requests expansion.
+         const inField = event.target === urlbarInput ||
+             event.target === gURLBar._inputContainer || event.target === urlbarInput.parentElement;
+         if (event.button === 0 && inField && !centeredAtMouseDown &&
+             Services.prefs.getBoolPref(PREF_COMPACT, false)) {
+             urlbar.setAttribute(SIDEBAR_EDIT_ATTR, "");
+         }
      }
  }, true);
+
+ // Empty sidebar backgrounds do not necessarily move native focus. Dismiss
+ // after the click so tabs, sidebar controls and their menus act first.
+ window.addEventListener("click", event => {
+     if (event.button !== 0 || event.defaultPrevented || urlbarPopups.size !== 0 ||
+         !Services.prefs.getBoolPref(PREF_COMPACT, false) ||
+         !(urlbar.hasAttribute(SIDEBAR_EDIT_ATTR) || urlbar.hasAttribute(ACTIVE_ATTR)) ||
+         document.activeElement !== urlbarInput) {
+         return;
+     }
+     const sidebar = document.getElementById("sidebar-container");
+     const root = document.documentElement;
+     if (!sidebar?.hasAttribute("sidebar-launcher-expanded") ||
+         gBrowser.tabContainer.getAttribute("orient") !== "vertical" ||
+         root.hasAttribute("customizing") || root.getAttribute("sizemode") === "fullscreen" ||
+         root.hasAttribute("inDOMFullscreen") || !sidebar.contains(event.target)) {
+         return;
+     }
+     // Inspect the composed path too: sidebar tools can live in shadow DOM.
+     const path = event.composedPath?.() || [event.target];
+     if (path.some(node => node.closest?.(
+         "tab, tab-group, tab-split-view-wrapper, toolbarbutton, button, input, textarea, " +
+         "select, a, splitter, panel, menupopup, [role=button], [role=menuitem]"
+     ))) {
+         return;
+     }
+     if (editingSession) {
+         endFlow({ revert: true });
+     } else {
+         urlbar.removeAttribute(SIDEBAR_EDIT_ATTR);
+     }
+     gURLBar.view.close();
+     gBrowser.selectedBrowser.focus();
+ });
 
  window.addEventListener("keydown", event => {
      centeredAtMouseDown = false;
@@ -662,9 +714,11 @@
          return;
      }
 
+     urlbar.removeAttribute(SIDEBAR_EDIT_ATTR);
+
      // Firefox's own Escape closes the results view first and only drops the
      // typed text on a second press, so a floating bar would need two presses.
-     // Keep Ctrl+L's cancellation in capture, while Ctrl+T's listener above
+     // Keep Ctrl+L/Ctrl+K cancellation in capture, while Ctrl+T's listener above
      // runs after Firefox's native handling in the bubble phase.
      const inBar = urlbar.hasAttribute("focused") && document.activeElement === urlbarInput;
 
@@ -695,6 +749,7 @@
      const popup = event.target;
      urlbarPopups.add(popup);
      pendingPopups.add(popup);
+     urlbar.setAttribute(CONTROLS_OPEN_ATTR, "");
 
      if (editingSession?.newTab || centeredAtMouseDown || urlbar.matches(CENTERED_SELECTOR)) {
          urlbar.setAttribute(HOLD_ATTR, "");
@@ -723,6 +778,7 @@
      if (belongsToUrlbar(event.target)) {
          pendingPopups.delete(event.target);
          urlbarPopups.add(event.target);
+         urlbar.setAttribute(CONTROLS_OPEN_ATTR, "");
      }
  }, true);
 
@@ -735,12 +791,8 @@
 
      centeredAtMouseDown = false;
 
-     // Give focus a moment to settle, then decide whether to keep holding.
-     // If the input is still focused (e.g. the menu was dismissed by clicking
-     // its button again) but the results view is closed and nothing has been
-     // typed, Firefox's own state no longer says "floating", yet the user is
-     // still in the bar. Keep holding until focus leaves it or Escape is
-     // pressed (see the blur and keydown listeners above).
+     // Menu dismissal can restore focus asynchronously. Keep floating while
+     // the input remains focused; blur or Escape will release the session.
      setTimeout(() => {
          if (session !== editingSession || urlbarPopups.size !== 0) {
              return;
@@ -752,11 +804,11 @@
 
          log("menu closed; URL bar state:", JSON.stringify({
              focused: urlbar.hasAttribute("focused"),
-                                                           usertyping: urlbar.hasAttribute("usertyping"),
-                                                           popoverOpen: urlbar.hasAttribute("popover-open"),
-                                                           open: urlbar.hasAttribute("open"),
-                                                           activeElement: document.activeElement?.id || document.activeElement?.localName,
-                                                           keepingHold: stillInBar
+             usertyping: urlbar.hasAttribute("usertyping"),
+             popoverOpen: urlbar.hasAttribute("popover-open"),
+             open: urlbar.hasAttribute("open"),
+             activeElement: document.activeElement?.id || document.activeElement?.localName,
+             keepingHold: stillInBar
          }));
 
          if (!stillInBar) {
@@ -771,8 +823,113 @@
 
  window.addEventListener("unload", () => {
      endFlow();
+     urlbar.removeAttribute(CONTROLS_OPEN_ATTR);
      observer.disconnect();
  }, { once: true });
+
+ // Compact mode keeps the address field visible, but F10/Alt still need access
+ // to the native menubar. Do not hide controls without anchor visibility support.
+ const toolbox = document.getElementById("navigator-toolbox");
+ if (toolbox && window.CSS?.supports("anchor-name: --a") &&
+     window.CSS.supports("position-visibility: always")) {
+     const nativeFocusAttr = "floatingurlbar-native-focus";
+     const onToolbarKey = event => {
+         if (Services.prefs.getBoolPref(PREF_COMPACT, false) &&
+             (event.key === "F10" || (event.key === "Alt" && !event.ctrlKey && !event.metaKey))) {
+             toolbox.setAttribute(nativeFocusAttr, "");
+             setTimeout(() => toolbox.removeAttribute(nativeFocusAttr), 0);
+         }
+     };
+     window.addEventListener("keydown", onToolbarKey, true);
+     window.addEventListener("keypress", onToolbarKey, true);
+
+     // Keep Firefox's customization order without moving its widgets out of
+     // their native toolbar. Reserve enough sidebar space when buttons wrap.
+     const sidebar = document.getElementById("sidebar-container");
+     const target = document.getElementById("nav-bar-customization-target");
+     const container = document.getElementById("urlbar-container");
+     if (sidebar && target && container && typeof window.ResizeObserver === "function") {
+         const controlAttr = "floatingurlbar-compact-control";
+         const compactReadyAttr = "floatingurlbar-compact-ready";
+         const columnProp = "--floatingurlbar-compact-column";
+         const rowProp = "--floatingurlbar-compact-row";
+         const inputTopProp = "--floatingurlbar-compact-input-top";
+         const headerHeightProp = "--floatingurlbar-compact-header-height";
+         let controls = new Set();
+         const setProperty = (node, name, value) => {
+             if (node.style.getPropertyValue(name) !== value) {
+                 node.style.setProperty(name, value);
+             }
+         };
+         const releaseControl = node => {
+             node.removeAttribute(controlAttr);
+             node.style.removeProperty(columnProp);
+             node.style.removeProperty(rowProp);
+         };
+         const syncControls = () => {
+             const next = new Set();
+             let afterField = false;
+             for (const node of target.children) {
+                 if (node === container) {
+                     afterField = true;
+                     continue;
+                 }
+                 // Keep native panel access in the header even at Firefox's
+                 // default position after the address field.
+                 if (afterField && node.id !== "unified-extensions-button") {
+                     continue;
+                 }
+                 if ((node.localName === "toolbarbutton" || node.id === "stop-reload-button" ||
+                     node.classList?.contains("unified-extensions-item")) &&
+                     window.getComputedStyle(node).display !== "none") {
+                     next.add(node);
+                 }
+             }
+             for (const node of controls) {
+                 if (!next.has(node)) {
+                     releaseControl(node);
+                 }
+             }
+             const columns = Math.max(1, Math.floor((sidebar.clientWidth - 12) / 36));
+             let index = 1; // The permanent menu button occupies the first slot.
+             for (const node of next) {
+                 node.setAttribute(controlAttr, "");
+                 setProperty(node, columnProp, String(index % columns));
+                 setProperty(node, rowProp, String(Math.floor(index / columns)));
+                 index++;
+             }
+             const inputTop = 4 + Math.ceil(index / columns) * 36;
+             setProperty(document.documentElement, inputTopProp, `${inputTop}px`);
+             setProperty(document.documentElement, headerHeightProp, `${inputTop + 40}px`);
+             controls = next;
+         };
+         const widgetsObserver = new MutationObserver(syncControls);
+         widgetsObserver.observe(target, {
+             childList: true, subtree: true, attributes: true,
+             attributeFilter: ["hidden", "collapsed"]
+         });
+         const sidebarObserver = new window.ResizeObserver(syncControls);
+         sidebarObserver.observe(sidebar);
+         syncControls();
+         toolbox.setAttribute(compactReadyAttr, "");
+         window.addEventListener("unload", () => {
+             widgetsObserver.disconnect();
+             sidebarObserver.disconnect();
+             for (const node of controls) {
+                 releaseControl(node);
+             }
+             document.documentElement.style.removeProperty(inputTopProp);
+             document.documentElement.style.removeProperty(headerHeightProp);
+             toolbox.removeAttribute(compactReadyAttr);
+         }, { once: true });
+     }
+
+     window.addEventListener("unload", () => {
+         window.removeEventListener("keydown", onToolbarKey, true);
+         window.removeEventListener("keypress", onToolbarKey, true);
+         toolbox.removeAttribute(nativeFocusAttr);
+     }, { once: true });
+ }
 
  log("loaded");
 })();

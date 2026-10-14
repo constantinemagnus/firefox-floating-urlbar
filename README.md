@@ -1,13 +1,22 @@
-# Firefox Floating Urlbar
+# Firefox Floating URL Bar & Compact Mode
 
-A Zen-style floating URL bar for Firefox. Ctrl+T opens a centered floating bar without creating a blank tab; type a URL or search and press Enter to open the result in a new tab. Ctrl+L opens the same bar for navigation in the current tab.
+A Zen-style floating URL bar for Firefox, with an optional [compact mode](#compact-mode) for vertical tabs.
+
+- **Floating URL bar:** Ctrl+T opens a centered floating bar without creating a blank tab; Enter opens the URL or search in a new tab. Ctrl+L navigates in the current tab, and Ctrl+K opens centered search.
+- **Compact mode:** Puts the address field, menu, and your chosen toolbar buttons above vertical tabs on either side of the window. The remaining toolbar appears on hover at the top edge, leaving more room for the page. The same floating shortcuts stay available.
 
 It uses an [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user script and a stylesheet. No extension or theme replacement is required.
 
-## Demo
+## Floating URL bar demo
 
 <p align="center">
   <img src="assets/demo.webp" alt="firefox-floating-urlbar demo" width="800">
+</p>
+
+## Compact mode demo
+
+<p align="center">
+  <img src="assets/compact-demo.png" alt="Firefox compact mode with the address field and toolbar buttons above vertical tabs" width="800">
 </p>
 
 ## Behaviour
@@ -17,18 +26,19 @@ It uses an [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user scr
 | Ctrl+T (Cmd+T on macOS) | Centred URL bar; Enter opens the result in a new tab |
 | Escape / click away | Cancels floating URL-bar editing, discards what you typed, and restores the current page's address |
 | Ctrl+L (Cmd+L on macOS) | Centred URL bar; Enter navigates in the current tab |
-| Click the normal address field | Stays in the toolbar without dimming; suggestions, search, and editing work normally |
-| Click inside the floating address field | Keeps the bar floating with the same Ctrl+T/Ctrl+L navigation behavior |
+| Ctrl+K (Cmd+K on macOS) | Centred search mode; Enter searches in the current tab. Outside compact layout, a separate Firefox search bar keeps native focus behavior |
+| Click the normal address field | Uses native editing without centering or dimming; suggestions and search work normally |
+| Click inside the floating address field | Keeps the current shortcut's search mode and navigation destination |
 | F6 / Alt+D | Normal Firefox behavior; does not open the floating bar |
-| `+` button, File → New Tab, Ctrl+N (Cmd+N on macOS) | Opens a normal tab or window with the URL bar in the toolbar |
+| `+` button, File → New Tab, Ctrl+N (Cmd+N on macOS) | Opens a normal tab or window without activating the centered bar |
 
-By default, the bar opens and closes without animation. It dims the background by 35%, even with suggestions disabled. The input, suggestions, and menus stay above the dimming.
+By default, the bar opens and closes without animation and dims the background by 35%. Firefox's suggestion settings are respected; empty centered bars keep the same rounded appearance. The input, suggestions, and menus stay above the dimming.
 
 ## Requirements
 
 - Firefox with [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) installed in your profile. The installer does not install it.
 - CSS anchor positioning support. Without it, the stylesheet has no effect and the bar stays in its normal position.
-- Tested on Firefox 157.0 on Linux. Windows and macOS are untested.
+- Tested on Firefox 157.0.1 on Linux. Earlier revisions were manually tested on Windows; macOS is untested.
 - The script uses Firefox's internal URL bar APIs. If required APIs are missing, it logs a warning in the Browser Console and preserves normal Ctrl+T behavior.
 
 > These files run with full browser privileges. Read them before installing.
@@ -85,13 +95,15 @@ Create these preferences as **Boolean** values in `about:config` to override the
 
 | Preference | Default | Meaning |
 | --- | --- | --- |
-| `uc.floatingurlbar.enabled` | `true` | Set to `false` to restore normal Ctrl+T behavior without uninstalling |
+| `uc.floatingurlbar.enabled` | `true` | Set to `false` to restore native shortcut behavior; appearance preferences remain independent |
 | `uc.floatingurlbar.debug` | `false` | Log script activity to the Browser Console (Ctrl+Shift+J) |
 | `uc.floatingurlbar.animate` | `false` | CSS-only: enable the 0.3-second position/width animation |
 | `uc.floatingurlbar.dim` | `true` | CSS-only: dim the background by 35% while the bar floats |
 | `uc.floatingurlbar.glass` | `false` | Experimental, CSS-only: translucent floating input, suggestions, and engine shortcuts with background blur |
+| `uc.floatingurlbar.compact` | `false` | Experimental: compact toolbar above expanded vertical tabs |
+| `uc.floatingurlbar.compact.pins.manual` | `false` | Use Firefox's native pinned-tab height and resize handle instead of fitting rows automatically in compact mode |
 
-The system's reduced-motion preference always disables animation.
+The system's reduced-motion preference always disables animation. The optional animation is best suited to the normal toolbar layout.
 
 To adjust dimming, change `--floatingurlbar-dim-opacity` in `CSS/firefox-floating-urlbar.uc.css` or override it in `userChrome.css`:
 
@@ -110,6 +122,24 @@ Set `uc.floatingurlbar.glass` to `true` in `about:config` for the translucent ap
 <p align="center">
   <img src="assets/glass_look.png" alt="Floating Firefox URL bar with the optional glass appearance" width="800">
 </p>
+
+## Compact mode
+
+Set `uc.floatingurlbar.compact` to `true` to put the address field and menu above expanded vertical tabs on either side of the window. Collapsed sidebars, horizontal tabs, fullscreen and toolbar customization use the normal layout.
+
+In **Customize Toolbar**, place buttons before the address field to show them in the compact header, in the same order. This includes downloads and pinned extensions; extra buttons wrap onto another row. Buttons after the field stay in the hover toolbar, except the native **Extensions** button, which joins the header from either position in the navigation toolbar. Firefox's setting to hide that button is respected.
+
+Leave extensions unpinned to use their actions from the native Extensions panel. Newly pinned extensions appear after the address field by default; move them before it for direct access in the compact header.
+
+Clicking the address field or opening suggestions expands it beside the sidebar to 575px, limited by the window width, for current-tab navigation. Click empty sidebar space to dismiss editing. Automatic focus in an empty new tab keeps the field compact. Ctrl+T, Ctrl+L and Ctrl+K use the centered bar. Ctrl+K uses URL-bar search even if a separate search bar is configured; switching back to the normal layout restores its native behavior.
+
+The sidebar field hides the search-engine dropdown and engine-name chip. Choose or exit an engine in the centered bar; hiding the sidebar control leaves any selected engine unchanged. Left-side site information and permission icons, including warnings and sharing indicators, stay hidden even on hover or focus; use Ctrl+L to access them in the centered bar. Native notification prompts keep their anchors. Right-side controls appear on hover or focus and stay visible while their popup is open.
+
+Pinned tabs automatically grow and shrink to fit their rows, scrolling when the area reaches 40% of the window height. Set `uc.floatingurlbar.compact.pins.manual` to `true` for Firefox's saved height and native resize handle. Switching modes preserves the saved height.
+
+Hover near the top edge for 250ms to reveal the remaining toolbar and window controls. They stay visible for 300ms after the pointer leaves to allow small slips. The native menubar has its own themed background when revealed. On Windows and Linux, a right-hand compact sidebar moves the window controls to the left, with Close at the outer edge. macOS retains native placement.
+
+The overflow button is hidden in compact mode. Outside compact mode, Firefox handles it normally.
 
 ## Other URL bar tweaks
 

@@ -105,7 +105,7 @@
     /*
      * CENTERED STATE
      *
-     * The script sets [floatingurlbar-active] only for Ctrl+T / Ctrl+L.
+     * The script sets [floatingurlbar-active] for Ctrl+T / Ctrl+L and URL-bar Ctrl+K.
      * Clicking the normal address field or automatic focus in a new tab or
      * window must not activate the floating layout.
      * Once activated, float even when suggestion settings leave the view closed.
@@ -175,6 +175,33 @@
         ) !important;
     }
 
+    /* Search mode can open an empty view with suggestions disabled. With
+     * no rows or engine shortcuts, paint the same single rounded field as
+     * the closed centered bar instead of two clipped background halves.
+     * Firefox hides its engine shortcuts with inline display or [hidden]. */
+    #urlbar[floatingurlbar-active][popover-open][noresults]:has(
+        > .urlbarView > .search-one-offs:is([hidden], [style*="display: none"])
+    ) {
+        --urlbar-background-overhang-open: 0px;
+        --urlbar-background-border-open: var(--urlbar-background-border-focused);
+        --urlbar-input-container-outline-open: none;
+        --urlbar-input-container-outline-open-focused: none;
+
+        > :is(.urlbar-background, #urlbar-background) {
+            height: var(--floatingurlbar-height) !important;
+            border-radius: var(--urlbar-background-border-radius) !important;
+            outline: var(--urlbar-background-outline-focused) !important;
+            clip-path: none !important;
+            box-shadow: none !important;
+        }
+        > .urlbarView > .urlbarView-background {
+            display: none !important;
+        }
+        > .urlbarView:popover-open::backdrop {
+            border-radius: var(--urlbar-background-border-radius) !important;
+        }
+    }
+
     /*
      * Keep the centered URL bar visible above the page.
      */
@@ -216,14 +243,171 @@
     --urlbarView-margin-block: 4px;
     }
 
+    /* Compact vertical-tab header. The original toolbar/URL-bar DOM stays
+     * intact: native click editing expands beside the sidebar, while explicit
+     * floating shortcuts keep their existing viewport-centered geometry.
+     * Horizontal tabs, collapsed sidebars and fullscreen retain native layout. */
+    @supports (position-visibility: always) {
+        @media -moz-pref("uc.floatingurlbar.compact") {
+            :root:has(
+                #navigator-toolbox[floatingurlbar-compact-ready]
+            ):not([customizing], [sizemode="fullscreen"], [inDOMFullscreen]):has(
+                #sidebar-container[sidebar-launcher-expanded] #tabbrowser-tabs[orient="vertical"]
+            ) {
+                #sidebar-container {
+                    anchor-name: --floatingurlbar-sidebar;
+                    box-sizing: border-box;
+                    padding-block-start: var(--floatingurlbar-compact-header-height, 80px);
+                }
+                /* As in FlexFox, use toolbar order to keep native controls
+                 * clear of a right-side header. macOS keeps native placement. */
+                @media (-moz-platform: windows) or (-moz-platform: linux) {
+                    &:has(#sidebar-container[sidebar-positionend]) {
+                        #navigator-toolbox .titlebar-buttonbox-container {
+                            order: -1 !important;
+                        }
+                        #navigator-toolbox .titlebar-buttonbox {
+                            flex-direction: row-reverse !important;
+                        }
+                    }
+                }
+                /* Fit pins to their rows instead of Firefox's saved height.
+                 * As in FlexFox, leave height entirely native in manual mode. */
+                @media not -moz-pref("uc.floatingurlbar.compact.pins.manual") {
+                    #pinned-tabs-container[orient="vertical"]:not([dragActive]) {
+                        height: fit-content !important;
+                        max-height: max(var(--tab-height-with-margin-padding), 40vh) !important;
+                    }
+                    #vertical-pinned-tabs-splitter {
+                        display: none !important;
+                    }
+                }
+                #nav-bar-overflow-button {
+                    display: none !important;
+                }
+                #navigator-toolbox[floatingurlbar-compact-ready] {
+                    position: fixed !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    width: 100% !important;
+                    z-index: 5 !important;
+                    visibility: hidden;
+                    transform: none !important;
+                    opacity: 1 !important;
+                    /* Allow small pointer slips before hiding the toolbar. */
+                    transition: visibility 0s 300ms !important;
+                }
+                #navigator-toolbox[floatingurlbar-compact-ready]::before {
+                    content: "";
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: 12px;
+                    visibility: visible;
+                    pointer-events: auto;
+                }
+                /* Operating the permanent header must not reveal the strip. */
+                #navigator-toolbox[floatingurlbar-compact-ready]:hover:not(:has(
+                    :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button):hover
+                )) {
+                    visibility: visible;
+                    transition: visibility 0s 250ms !important;
+                }
+                #navigator-toolbox[floatingurlbar-compact-ready]:has(toolbarbutton[open="true"]:not(#urlbar *)),
+                #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-native-focus],
+                #mainPopupSet:has(> [panelopen]:not(#tab-preview-panel)) ~ #navigator-toolbox[floatingurlbar-compact-ready] {
+                    visibility: visible;
+                    transition: none !important;
+                }
+                /* Give the revealed native menu its own backing above the page. */
+                #toolbar-menubar[autohide]:not([autohide="false"], [inactive="true"]) {
+                    position: relative;
+                    z-index: 6;
+                    visibility: visible;
+                    background-color: var(--toolbox-background-color, var(--lwt-accent-color, Canvas)) !important;
+                    color: var(--toolbox-text-color, var(--lwt-text-color, CanvasText)) !important;
+                    box-shadow: 0 1px 0 var(--chrome-content-separator-color, currentColor) !important;
+                }
+                #navigator-toolbox[floatingurlbar-compact-ready] #urlbar {
+                    visibility: visible;
+                    /* Its toolbar-bound wrapper still spans the toolbar width.
+                     * Only the relocated input/view should receive pointer events. */
+                    pointer-events: none;
+                }
+                #urlbar > :is(.urlbar-input-container, .urlbarView),
+                #urlbar :is(panel, menupopup) {
+                    pointer-events: auto;
+                }
+                #urlbar > :is(.urlbar-input-container, .urlbar-background, #urlbar-background, .urlbarView) {
+                    position-visibility: always !important;
+                }
+                /* Until a floating shortcut's native focus arrives, keep sidebar geometry.
+                 * Dropping it on [active] alone flashes the toolbar field. */
+                #urlbar:not([floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold])) {
+                    --floatingurlbar-height: 32px;
+                    --floatingurlbar-width: calc(anchor-size(width) - 16px);
+                    --floatingurlbar-left: calc(anchor(left) + 8px);
+                    --floatingurlbar-margin-top: 0px;
+                }
+                /* Automatic focus keeps the idle width. Deliberate field clicks
+                 * and open suggestions expand it beside the sidebar. */
+                #urlbar:not([floatingurlbar-active]):is([floatingurlbar-sidebar-editing]:is([focused], [floatingurlbar-controls-open]), [popover-open]) {
+                    --floatingurlbar-width: min(575px, calc(100vw - 16px));
+                    --floatingurlbar-left: max(8px, min(calc(anchor(left) + 8px), calc(100vw - 583px)));
+                }
+                /* Engine selection stays in the centered bar. Keep long engine
+                 * names out of both the idle and expanded sidebar field. */
+                #urlbar:not([floatingurlbar-active]) .searchmode-switcher {
+                    display: none !important;
+                }
+                /* Keep the sidebar text's left edge steady, including on hover.
+                 * Leave notification anchors native; centered editing restores
+                 * the site-information and permission controls. */
+                #urlbar:not([floatingurlbar-active]) :is(
+                    #trust-icon-container, #tracking-protection-icon-container,
+                    #identity-icon-box, #identity-permission-box
+                ) {
+                    display: none !important;
+                }
+                /* Reclaim right-side address space while idle. Popup
+                 * tracking keeps controls and their anchors steady after blur. */
+                #urlbar:not([floatingurlbar-active], [focused], [popover-open], [floatingurlbar-controls-open], :focus-within):not(:has(> .urlbar-input-container:hover)) {
+                    #page-action-buttons > :is(
+                        #star-button-box, #reader-mode-button, #picture-in-picture-button,
+                        #split-view-button, #share-button, #pageActionButton, #urlbar-zoom-button,
+                        #translations-button:not([translationsactive]), .urlbar-addon-page-action
+                    ):not([attention], [notification], [badge], [open]):not(:has([attention], [notification], [badge], [open])) {
+                        display: none !important;
+                    }
+                }
+                #urlbar:not([floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold])) > :is(.urlbar-input-container, .urlbar-background, #urlbar-background) {
+                    position-anchor: --floatingurlbar-sidebar !important;
+                    top: calc(anchor(top) + var(--floatingurlbar-compact-input-top, 40px)) !important;
+                }
+                #urlbar:not([floatingurlbar-active])[popover-open] > :is(.urlbar-background, #urlbar-background) {
+                    top: calc(anchor(top) + var(--floatingurlbar-compact-input-top, 40px) - var(--urlbar-background-overhang-open, 8px)) !important;
+                }
+                :is([floatingurlbar-compact-control], #PanelUI-menu-button) {
+                    position: fixed !important;
+                    position-anchor: --floatingurlbar-sidebar;
+                    top: calc(anchor(top) + 4px + var(--floatingurlbar-compact-row, 0) * 36px) !important;
+                    left: calc(anchor(left) + 8px + var(--floatingurlbar-compact-column, 0) * 36px) !important;
+                    width: 32px !important;
+                    height: 32px !important;
+                    margin: 0 !important;
+                    visibility: visible;
+                    position-visibility: always;
+                }
+            }
+        }
+    }
+
     /* Default on when unset; an explicit Boolean false disables both dim layers. */
     @media not -moz-pref("uc.floatingurlbar.dim", false) {
-        /*
-         * With no suggestions (or while an engine menu is open), no view is in
-         * the top layer. Paint outside the input's background instead. Shadows
-         * do not affect layout or hit testing; the background is also inert.
-         * Exclude the open-view state so the two dim layers never overlap.
-         */
+        /* Closed views use the input's shadow for dimming; open views use
+         * the backdrop below, including empty search popups. These states
+         * stay exclusive so the dim layers never overlap. */
         #urlbar[floatingurlbar-active]:not([popover-open]):is([focused], [floatingurlbar-hold]) > :where(
         #urlbar-background,
         .urlbar-background
@@ -265,8 +449,6 @@
      * share one tint without stacking translucent section backgrounds.
      * The engine dropdown is a separate native XUL panel; leave it native.
      * Unsupported CSS blur, reduced transparency and forced colors stay opaque. */
-    /* Firefox 137+ uses -moz-pref() media queries for live preference changes.
-     * The older (-moz-bool-pref: "...") syntax is no longer supported. */
     @media -moz-pref("uc.floatingurlbar.glass") and
         (prefers-reduced-transparency: no-preference) and (forced-colors: none) {
         @supports (backdrop-filter: blur(12px)) {
