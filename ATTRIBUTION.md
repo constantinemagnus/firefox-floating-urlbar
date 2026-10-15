@@ -1,6 +1,6 @@
 # Attribution
 
-This project is an independent Firefox customization and is not affiliated with Mozilla, Natsumi Browser, or FlexFox.
+This project is an independent Firefox customization and is not affiliated with Mozilla, Natsumi Browser, FlexFox, or fx-autoconfig.
 
 The project's code and original documentation are licensed under the
 [MIT License](LICENSE). Copyright (c) 2026 Constantine Magnus.
@@ -81,14 +81,32 @@ which is licensed under MIT.
 
 ## fx-autoconfig
 
-This project requires fx-autoconfig to load its privileged Firefox user scripts.
+This project uses fx-autoconfig by MrOtherGuy to load its privileged Firefox
+user scripts. The installers download unmodified upstream source at a pinned
+commit and verify its SHA-256 checksum. The pin is recorded in
+`fx-autoconfig.conf` and the Arch package recipe.
 
 Original project:
 https://github.com/MrOtherGuy/fx-autoconfig
 
-fx-autoconfig is licensed under the Mozilla Public License 2.0 (MPL-2.0).
+Pinned source:
+https://github.com/MrOtherGuy/fx-autoconfig/tree/dfdab5684faffc112b76ccb1d8cab7f75da0102c
 
-fx-autoconfig is a dependency and is not included in this repository.
+fx-autoconfig is licensed under the [Mozilla Public License 2.0](https://www.mozilla.org/MPL/2.0/)
+(MPL-2.0). Its source files and existing upstream notices remain unchanged.
+
+The upstream loader source is downloaded during installation or package build,
+and is not vendored in this repository. Standalone installers keep the upstream
+license in `chrome/utils/fx-autoconfig.LICENSE` and an author, license, and pinned
+source notice in `chrome/utils/fx-autoconfig.txt`. Existing externally managed
+loaders are left unchanged.
+
+The optional Arch package redistributes the unmodified source files, includes
+the upstream license at `/usr/share/licenses/fx-autoconfig/LICENSE`, and records
+the pinned source URL at `/usr/share/doc/fx-autoconfig/SOURCE`.
+
+Our separate installer and packaging code remain under this project's MIT
+license. The fx-autoconfig files retain their MPL-2.0 terms.
 
 ## Demo imagery and website content
 

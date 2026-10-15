@@ -42,10 +42,11 @@ unset -f date
 # where Bash does not apply errexit inside the helper.
 printf 'must survive' > "$TEST_DIR/preserved"
 if (
-    cp() { return 1; }
+    cp() { printf 'partial backup' > "${@: -1}"; return 1; }
     copy_with_backup "$TEST_DIR/source" "$TEST_DIR/preserved"
 ) > "$TEST_DIR/backup-failure.log" 2>&1; then fail "backup failure accepted"; fi
 [[ "$(cat "$TEST_DIR/preserved")" == 'must survive' ]] || fail "overwrote after backup failure"
+if compgen -G "$TEST_DIR/preserved.bak-*" >/dev/null; then fail "failed copy left an incomplete backup"; fi
 
 # Reject linked and non-file destinations without following or nesting copies.
 printf 'unrelated user data' > "$TEST_DIR/unrelated"
@@ -187,6 +188,17 @@ for kind in symlink hardlink; do
 done
 [[ "$(cat "$TEST_DIR/unrelated")" == 'unrelated user data' ]] || fail "overwrote saved-record target"
 
+# The writer must reject a linked state directory even without installer preflight.
+mkdir "$TEST_DIR/outside-state"
+printf 'preserve state\n' > "$TEST_DIR/outside-state/profile"
+ln -s "$TEST_DIR/outside-state" "$TEST_DIR/linked-state"
+if (
+    CONFIG_DIR="$TEST_DIR/linked-state"
+    SAVED_PROFILE_FILE="$CONFIG_DIR/profile"
+    save_profile "$PROFILE_A"
+) > "$TEST_DIR/saved-directory-link.log" 2>&1; then fail "accepted linked saved-profile directory"; fi
+[[ "$(cat "$TEST_DIR/outside-state/profile")" == 'preserve state' ]] || fail "overwrote linked-directory state"
+
 # Only the selected profile's own real cache directory is eligible. A guarded
 # rm prevents a future regression from deleting anything outside these fixtures.
 safe_clear_cache() (
@@ -291,6 +303,9 @@ check_update
 [[ "$(sed -n '2,3p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --profile "$PROFILE_A")" ]] || fail "default saved profile not reused"
 check_update --choose
 [[ "$(wc -l < "$TEST_INSTALL_TRACE")" == 1 ]] || fail "choose reused saved profile"
+check_update --firefox-dir '/temporary Firefox'
+[[ "$(sed -n '2,3p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --firefox-dir '/temporary Firefox')" ]] || fail "Firefox directory not forwarded"
+[[ "$(sed -n '4,5p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --profile "$PROFILE_A")" ]] || fail "Firefox directory suppressed saved profile"
 export PROFILE_ROOT="$TEST_DIR/root-b"
 check_update
 [[ "$(wc -l < "$TEST_INSTALL_TRACE")" == 1 ]] || fail "environment root overridden"
@@ -304,3 +319,5 @@ if grep -Eq '^(merge |--no-pager )' "$TEST_GIT_TRACE"; then fail "ahead branch p
 grep -q 'ahead of upstream.*install.sh' "$TEST_DIR/ahead.log" || fail "ahead branch guidance missing"
 
 echo "Shell regressions passed (temporary profiles and mocked Git; no real profile or repository updated)."
+bash "$REPO_DIR/tests/autoconfig.test.sh"
+bash "$REPO_DIR/tests/remote-install.test.sh"

@@ -91,6 +91,7 @@ cat <<'NOTES'
 
 Uninstalled. Reopen Firefox; if the old behaviour persists, clear the startup
 cache in about:support.
+Shared fx-autoconfig files remain installed for other user scripts.
 
 Optional cleanup in about:config:
   - Reset any uc.floatingurlbar.* preferences you created.

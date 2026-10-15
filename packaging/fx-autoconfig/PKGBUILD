@@ -1,0 +1,29 @@
+pkgname=fx-autoconfig
+pkgver=0.10.16.r20260723
+pkgrel=2
+pkgdesc="Load custom JavaScript and CSS in Firefox's browser context"
+arch=('any')
+url='https://github.com/MrOtherGuy/fx-autoconfig'
+license=('MPL-2.0')
+depends=('firefox')
+conflicts=('firefox-user-autoconfig' 'firefox-user-autoconfig-no-sandbox'
+           'firefox-arkenfox-autoconfig')
+backup=('usr/lib/firefox/config.js'
+        'usr/lib/firefox/defaults/pref/config-prefs.js')
+
+# Upstream has no release tags; pin a snapshot for reproducible builds.
+_commit=dfdab5684faffc112b76ccb1d8cab7f75da0102c
+source=("$pkgname-$_commit.tar.gz::https://codeload.github.com/MrOtherGuy/fx-autoconfig/tar.gz/$_commit")
+sha256sums=('0319bf04a554c9ca3c40e985159e709e572e964c0d8c6e61291e769b05c9fbc6')
+
+package() {
+    cd "$srcdir/$pkgname-$_commit" || return
+    install -Dm644 program/config.js "$pkgdir/usr/lib/firefox/config.js"
+    install -Dm644 program/defaults/pref/config-prefs.js \
+        "$pkgdir/usr/lib/firefox/defaults/pref/config-prefs.js"
+    install -Dm644 -t "$pkgdir/usr/share/$pkgname/utils" profile/chrome/utils/*
+    install -Dm644 readme.md "$pkgdir/usr/share/doc/$pkgname/readme.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    printf 'fx-autoconfig by MrOtherGuy\nLicense: MPL-2.0\nUnmodified source: https://github.com/MrOtherGuy/fx-autoconfig/tree/%s\n' \
+        "$_commit" > "$pkgdir/usr/share/doc/$pkgname/SOURCE"
+}

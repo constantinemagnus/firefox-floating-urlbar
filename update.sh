@@ -15,7 +15,7 @@ Options:
       --choose    Pick the profile again instead of using the saved one
   -h, --help      Show this help
 
-Other options (--profile, --root) are passed through to install.sh.
+Other options (--profile, --root, --firefox-dir) are passed through to install.sh.
 USAGE
 }
 
@@ -31,9 +31,10 @@ while (( $# > 0 )); do
         -y|--yes)  ASSUME_YES=1; shift ;;
         --choose)  CHOOSE=1; shift ;;
         -h|--help) usage; exit 0 ;;
-        -p|--profile|--root)
+        -p|--profile|--root|--firefox-dir)
             [[ -n "${2:-}" ]] || die "$1 needs a nonempty value"
-            if [[ "$1" == --root ]]; then HAS_ROOT_ARG=1; else HAS_PROFILE_ARG=1; fi
+            if [[ "$1" == --root ]]; then HAS_ROOT_ARG=1;
+            elif [[ "$1" != --firefox-dir ]]; then HAS_PROFILE_ARG=1; fi
             PASSTHROUGH+=("$1" "$2"); shift 2 ;;
         -*) die "Unknown option: $1 (see --help)" ;;
         *) [[ -n "$1" ]] || die "Profile directory must not be empty"; HAS_PROFILE_ARG=1; PASSTHROUGH+=("$1"); shift ;;
@@ -81,8 +82,10 @@ else
     # Apply exactly the revision shown above, without fetching newer changes.
     if ! git merge --ff-only "$UPSTREAM_REV"; then
         echo >&2
-        echo "git merge --ff-only failed. This usually means you have local edits or the" >&2
-        echo "history diverged. Try: git status  (then commit, stash or reset your changes)." >&2
+        echo "git merge --ff-only failed. This usually means you have local edits, the" >&2
+        echo "history diverged, or an untracked file would be overwritten (see Git's output above)." >&2
+        echo "Try: git status  (then commit or stash your changes, or move aside/back up" >&2
+        echo "the conflicting file)." >&2
         exit 1
     fi
 fi

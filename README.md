@@ -36,16 +36,26 @@ By default, the bar opens and closes without animation and dims the background b
 
 ## Requirements
 
-- Firefox with [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) installed in your profile. The installer does not install it.
+- Firefox. The installers set up [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) when needed, or reuse an existing loader.
 - CSS anchor positioning support. Without it, the stylesheet has no effect and the bar stays in its normal position.
-- Tested on Firefox 157.0.1 on Linux. Earlier revisions were manually tested on Windows; macOS is untested.
+- Tested on Firefox 157.0.1 on Linux; Windows local install verified. Windows remote install/uninstall and macOS are untested.
 - The script uses Firefox's internal URL bar APIs. If required APIs are missing, it logs a warning in the Browser Console and preserves normal Ctrl+T behavior.
 
 > These files run with full browser privileges. Read them before installing.
 
 ## Install
 
-### Linux (installer script)
+### Linux and macOS
+
+Arch users can manage fx-autoconfig with a [local pacman package](packaging/fx-autoconfig/README.md).
+
+One-command:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.sh)"
+```
+
+Or locally:
 
 ```bash
 git clone https://github.com/constantinemagnus/firefox-floating-urlbar.git
@@ -53,13 +63,37 @@ cd firefox-floating-urlbar
 ./install.sh
 ```
 
-The installer preselects your default Firefox profile and copies the files into `chrome/JS` and `chrome/CSS`, keeping timestamped backups of existing files that differ. To specify a profile, use `./install.sh --profile /path/to/profile`.
+Options: `--profile /path/to/profile`, `--root DIR`, `--firefox-dir /path/to/firefox` (on macOS usually `/Applications/Firefox.app/Contents/Resources`). Append options to the paste command as `-- --profile /path/to/profile`. First-time setup needs `curl`, `tar`, and `sha256sum` or `shasum`.
 
-Restart Firefox. If changes do not appear, clear the startup cache in `about:support`.
+### Windows
 
-#### Manual (any OS)
+Local install verified; remote install/uninstall untested.
 
-**Prerequisite:** Install [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) first. This project depends on it to load custom JavaScript in Firefox. Simply copying the files below will not work without it.
+One-command:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1 | iex"
+```
+
+Or locally (PowerShell 5.1 or 7) from the extracted folder:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+Options: `-ProfilePath 'C:\path\to\profile'`, `-FirefoxDirectory 'C:\Program Files\Mozilla Firefox'`, `-Uninstall`.
+
+### Notes
+
+- Regular Firefox installs support automatic fx-autoconfig setup; Flatpak/Snap need separate AutoConfig setup first (an existing loader is reused). Existing loaders are preserved.
+- Run installers as your normal user; sudo/UAC is requested only for protected Firefox startup-file writes.
+- One-command installers fetch current `main` over HTTPS; the fx-autoconfig download is pinned to the commit in `fx-autoconfig.conf` and SHA-256 verified. See [ATTRIBUTION.md](ATTRIBUTION.md).
+- Automatic setup adds privileged startup files (`config.js`, `defaults/pref/config-prefs.js`) to Firefox's installation directory (all profiles) and sets `general.config.sandbox_enabled=false` for the AutoConfig sandbox.
+- Restart Firefox; if nothing changes, clear the startup cache in `about:support`.
+
+### Manual (any OS)
+
+**Prerequisite:** Install [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) first; copying these files alone does nothing without it.
 
 Once fx-autoconfig is installed:
 
@@ -71,23 +105,37 @@ Once fx-autoconfig is installed:
 
 ## Update
 
+One-command reruns fetch current source; ZIP users download/extract the newer ZIP, then rerun the installer with the same profile. Rerunning an old extracted copy does not update project files. For a Git checkout:
+
 ```bash
 ./update.sh
 ```
 
-The updater fetches and displays incoming commits and files, then asks before applying that revision and reinstalling. It stops if tracked files have local edits or your branch is ahead of upstream. Use `./install.sh` to install a local revision.
-
-Pass `--yes` to skip confirmation or `--choose` to select another profile. Explicit `--profile` or `--root` arguments override the saved profile.
+Shows incoming commits/files and asks before applying; refuses local edits or a branch ahead of upstream. Options: `--yes`, `--choose`, `--profile`/`--root`. Arch users: see [package update instructions](packaging/fx-autoconfig/README.md#updates-and-removal).
 
 ## Uninstall
+
+Locally:
 
 ```bash
 ./uninstall.sh
 ```
 
-The uninstaller removes the two files, backing up any that differ from the repository copies. It leaves Firefox's `prefs.js` untouched.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
+```
 
-Restart Firefox. If the old behavior persists, clear the startup cache in `about:support`. If you used an older version of the script, check `browser.urlbar.openintab` in `about:config` and reset it if you never set it yourself.
+One-command:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.sh)" -- --uninstall
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1))) -Uninstall"
+```
+
+Removes our two files (backs up edited copies); leaves `prefs.js` untouched and keeps shared fx-autoconfig files (remove them separately only if nothing else uses them). Restart Firefox and clear the startup cache if needed. If an older version changed `browser.urlbar.openintab` and you never set it, reset it in `about:config`.
 
 ## Preferences (about:config, optional)
 
@@ -154,13 +202,15 @@ To debug, set `uc.floatingurlbar.debug` to `true` in `about:config`, restart Fir
 ```bash
 node --test tests/urlbar.test.cjs
 bash tests/shell.test.sh
+pwsh -NoProfile -File tests/powershell.test.ps1
 ```
 
-Tests use mocks and temporary files. Visual changes still require testing in Firefox.
+Tests use mocks and temporary files. The PowerShell suite requires PowerShell and uses symbolic links; on Windows it needs Developer Mode or administrator rights for those fixtures. Visual changes and platform-specific elevation still require testing in Firefox on each OS.
 
 ## License and attribution
 
-Project code and original documentation are licensed under [MIT](LICENSE).
-The new-tab replacement was originally adapted from [Natsumi Browser](https://github.com/greeeen-dev/natsumi-browser) (source file: MIT), and the centered URL-bar CSS was adapted from [FlexFox](https://github.com/yuuqilin/FlexFox) (MIT). See `ATTRIBUTION.md` for full attribution and license details.
+Project code and original documentation are licensed under [MIT](LICENSE). The new-tab replacement was originally adapted from [Natsumi Browser](https://github.com/greeeen-dev/natsumi-browser) (source file: MIT), and the centered URL-bar CSS was adapted from [FlexFox](https://github.com/yuuqilin/FlexFox) (MIT).
+
+[fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) by MrOtherGuy remains under MPL-2.0. Standalone installs keep its license and pinned source URL in `chrome/utils/fx-autoconfig.LICENSE` and `chrome/utils/fx-autoconfig.txt`; the Arch package includes them under `/usr/share/licenses/fx-autoconfig/` and `/usr/share/doc/fx-autoconfig/`. See [ATTRIBUTION.md](ATTRIBUTION.md) for full notices.
 
 Third-party imagery, website content, logos, and trademarks shown in the demo captures retain their respective rights and are not covered by the project's MIT license. See [ATTRIBUTION.md](ATTRIBUTION.md#demo-imagery-and-website-content).

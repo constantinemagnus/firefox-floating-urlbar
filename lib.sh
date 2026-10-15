@@ -171,7 +171,7 @@ choose_profile() {
     PROFILE="${paths[$((choice - 1))]}"
 }
 
-# This project assumes fx-autoconfig is already installed in the profile.
+# Validate the loader after setup or when reusing an existing installation.
 # boot.sys.mjs and chrome.manifest are the loader's core; if they're missing
 # nothing will load, so that's fatal. The other loader files differ between
 # fx-autoconfig versions (e.g. fs.jsm vs fs.sys.mjs), so those only warn.
@@ -211,6 +211,7 @@ require_autoconfig_profile() {
 save_profile() {
     local absolute
     absolute="$(cd -- "$1" && pwd -P)" || die "Profile does not exist: $1"
+    require_directory_destination "$CONFIG_DIR"
     mkdir -p "$CONFIG_DIR"
     require_file_destination "$SAVED_PROFILE_FILE"
     printf '%s\n' "$absolute" > "$SAVED_PROFILE_FILE"
@@ -237,9 +238,18 @@ require_file_destination() {
     [[ ! -L "$dest" && ( ! -e "$dest" || -f "$dest" ) ]] ||
         die "Unsupported destination (expected an unlinked regular file): $dest"
     if [[ -f "$dest" ]]; then
-        links="$(stat -c %h -- "$dest")" || die "Cannot inspect destination: $dest"
+        if [[ "$(uname -s)" == Darwin ]]; then
+            links="$(stat -f %l "$dest")" || die "Cannot inspect destination: $dest"
+        else
+            links="$(stat -c %h -- "$dest")" || die "Cannot inspect destination: $dest"
+        fi
         [[ "$links" == 1 ]] || die "Refusing hardlinked destination: $dest"
     fi
+}
+
+require_directory_destination() {
+    [[ ! -L "$1" && ( ! -e "$1" || -d "$1" ) ]] ||
+        die "Unsupported destination directory: $1"
 }
 
 # PROFILE is resolved physically by callers; its chrome subdirectories must
@@ -247,8 +257,7 @@ require_file_destination() {
 require_profile_destinations() {
     local profile="$1" dir
     for dir in "$profile/chrome" "$profile/chrome/JS" "$profile/chrome/CSS"; do
-        [[ ! -L "$dir" && ( ! -e "$dir" || -d "$dir" ) ]] ||
-            die "Unsupported destination directory: $dir"
+        require_directory_destination "$dir"
     done
     require_file_destination "$profile/chrome/JS/replace-new-tab.uc.js"
     require_file_destination "$profile/chrome/CSS/firefox-floating-urlbar.uc.css"
@@ -258,7 +267,10 @@ backup_file() {
     local file="$1" backup
     # Reserve the name atomically; timestamps alone collide on repeated runs.
     backup="$(mktemp "$file.bak-$(date +%Y%m%d%H%M%S).XXXXXX")" || return
-    cp -p -- "$file" "$backup" || return
+    if ! cp -p -- "$file" "$backup"; then
+        rm -f -- "$backup"
+        return 1
+    fi
     printf '%s\n' "$backup"
 }
 
