@@ -203,9 +203,14 @@ To debug, set `uc.floatingurlbar.debug` to `true` in `about:config`, restart Fir
 node --test tests/urlbar.test.cjs
 bash tests/shell.test.sh
 pwsh -NoProfile -File tests/powershell.test.ps1
+bash tests/macos.test.sh # native macOS only
 ```
 
-Tests use mocks and temporary files. The PowerShell suite requires PowerShell and uses symbolic links; on Windows it needs Developer Mode or administrator rights for those fixtures. Visual changes and platform-specific elevation still require testing in Firefox on each OS.
+The [platform workflow](.github/workflows/platform-tests.yml) runs on GitHub-hosted Windows and macOS runners, including Intel and Apple Silicon. Windows exercises PowerShell 5.1 and 7; macOS uses system Bash and BSD tools. It runs on pushes and pull requests, and can be started manually after the workflow reaches the default branch.
+
+Installer tests use isolated temporary profiles, application directories and offline download fixtures. They check profile discovery/selection, installation, removal, backups and filesystem protections. The macOS suite also checks app-bundle paths, Unicode and bracketed profile names, `shasum`, and case-insensitive profile identity where supported. The JavaScript suite mocks Firefox objects.
+
+The PowerShell suite uses symbolic links; local Windows runs need Developer Mode or administrator rights. Firefox appearance, native window dragging, keyboard behavior in the GUI, and elevation prompts still require manual testing on each OS. CI does not launch Firefox or modify real profiles.
 
 ## License and attribution
 

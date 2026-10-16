@@ -6,5 +6,6 @@
 - The revealed toolbar uses Firefox's themed background instead of appearing transparent.
 - Toolbar hover now requires a stationary pointer for 200 ms within the top 3 pixels. Hiding keeps a 300 ms grace period, pressing holds the toolbar open, and leaving compact layout clears stale hover state.
 - Uninstall offers profile selection and suggests the last installed profile. Windows recognizes alternate spellings of the same profile when selecting it and clearing the saved choice.
+- GitHub Actions runs isolated installer and filesystem regressions on Windows and macOS, including Intel and Apple Silicon.
 
 After updating, restart Firefox and clear the startup cache through `about:support` if needed. Existing preferences remain unchanged.

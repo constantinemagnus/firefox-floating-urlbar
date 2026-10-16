@@ -3,7 +3,8 @@
 set -euo pipefail
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
-trap 'rm -rf -- "$TEST_DIR"' EXIT
+TEST_DIR="$(cd -- "$TEST_DIR" && pwd -P)"
+trap 'test_status=$?; if (( test_status )); then tail -n 40 "$TEST_DIR"/*.log 2>/dev/null || true; fi; rm -rf -- "$TEST_DIR"; exit "$test_status"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # Both distribution paths must fetch the same upstream snapshot.
@@ -30,7 +31,7 @@ done
 export TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/source.tar.gz"
 tar -czf "$TEST_AUTOCONFIG_ARCHIVE" -C "$TEST_DIR/source" fx-autoconfig-fixture
 printf 'AUTOCONFIG_COMMIT=fixture\nAUTOCONFIG_TAR_SHA256=%s\n' \
-    "$(sha256sum "$TEST_AUTOCONFIG_ARCHIVE" | awk '{ print $1 }')" > "$TEST_DIR/checkout/fx-autoconfig.conf"
+    "$(source "$REPO_DIR/autoconfig.sh"; autoconfig_sha256 "$TEST_AUTOCONFIG_ARCHIVE")" > "$TEST_DIR/checkout/fx-autoconfig.conf"
 export TEST_DOWNLOAD_TRACE="$TEST_DIR/downloads"
 cat > "$TEST_DIR/bin/curl" <<'CURL'
 #!/usr/bin/env bash
@@ -294,7 +295,7 @@ if (
         fail 'PATH fallback did not find the real installation after a stale profile hint'
 )
 
-# macOS resource directories and BSD stat are exercised without macOS hardware.
+# Exercise the resource-directory layout everywhere, using native BSD stat on macOS.
 mkdir -p "$TEST_DIR/Firefox.app/Contents/Resources" "$TEST_DIR/Firefox.app/Contents/MacOS"
 cp "$case_firefox/firefox" "$TEST_DIR/Firefox.app/Contents/MacOS/firefox"
 printf '[App]\n' > "$TEST_DIR/Firefox.app/Contents/Resources/application.ini"
@@ -302,10 +303,12 @@ printf '[App]\n' > "$TEST_DIR/Firefox.app/Contents/Resources/application.ini"
     source "$REPO_DIR/lib.sh"
     source "$REPO_DIR/autoconfig.sh"
     [[ "$(find_firefox_directory "$case_profile" "$TEST_DIR/Firefox.app/Contents/Resources")" == "$TEST_DIR/Firefox.app/Contents/Resources" ]] || fail 'macOS resource directory detection'
-    uname() { printf 'Darwin\n'; }
-    stat() { [[ "$1 $2" == '-f %l' ]] || fail 'wrong BSD stat flags'; command stat -c %h "$3"; }
+    if [[ "$(uname -s)" != Darwin ]]; then
+        uname() { printf 'Darwin\n'; }
+        stat() { [[ "$1 $2" == '-f %l' ]] || fail 'wrong BSD stat flags'; command stat -c %h "$3"; }
+    fi
     require_file_destination "$case_profile/prefs.js"
     ln "$case_profile/prefs.js" "$TEST_DIR/hardlinked-prefs"
     if (require_file_destination "$TEST_DIR/hardlinked-prefs") >/dev/null 2>&1; then fail 'BSD hardlink guard failed'; fi
 )
-echo 'AutoConfig regressions passed (offline fixtures, temporary installations, mocked macOS/package detection).'
+echo 'AutoConfig regressions passed (offline fixtures, temporary installations, mocked package detection).'
