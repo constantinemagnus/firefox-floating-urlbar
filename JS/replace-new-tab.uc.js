@@ -849,6 +849,16 @@
      const target = document.getElementById("nav-bar-customization-target");
      const container = document.getElementById("urlbar-container");
      if (sidebar && target && container && typeof window.ResizeObserver === "function") {
+         const placeholder = document.createElementNS("http://www.w3.org/1999/xhtml", "button");
+         placeholder.id = "floatingurlbar-sidebar-placeholder";
+         placeholder.type = "button";
+         placeholder.tabIndex = -1;
+         // Keep focus on the real input until the click can refocus it.
+         placeholder.addEventListener("mousedown", event => {
+             if (event.button === 0) event.preventDefault();
+         });
+         placeholder.addEventListener("click", () => urlbarInput.focus());
+         urlbar.appendChild(placeholder);
          const controlAttr = "floatingurlbar-compact-control";
          const compactReadyAttr = "floatingurlbar-compact-ready";
          const columnProp = "--floatingurlbar-compact-column";
@@ -867,22 +877,32 @@
              node.style.removeProperty(rowProp);
          };
          const syncControls = () => {
-             const next = new Set();
+             if (!compactLayoutActive()) {
+                 forgetReveal();
+             }
+             if (placeholder.textContent !== urlbarInput.placeholder) {
+                 placeholder.textContent = urlbarInput.placeholder;
+             }
+             let next = new Set();
              let afterField = false;
              for (const node of target.children) {
                  if (node === container) {
                      afterField = true;
                      continue;
                  }
-                 // Keep native panel access in the header even at Firefox's
-                 // default position after the address field.
-                 if (afterField && node.id !== "unified-extensions-button") {
+                 // Include pinned extensions even at their default position after the field.
+                 if (afterField && node.id !== "unified-extensions-button" &&
+                     !node.classList?.contains("unified-extensions-item")) {
                      continue;
                  }
                  if ((node.localName === "toolbarbutton" || node.id === "stop-reload-button" ||
                      node.classList?.contains("unified-extensions-item")) &&
                      window.getComputedStyle(node).display !== "none") {
-                     next.add(node);
+                     if (afterField && node.id === "unified-extensions-button") {
+                         next = new Set([node, ...next]);
+                     } else {
+                         next.add(node);
+                     }
                  }
              }
              for (const node of controls) {
@@ -906,20 +926,160 @@
          const widgetsObserver = new MutationObserver(syncControls);
          widgetsObserver.observe(target, {
              childList: true, subtree: true, attributes: true,
-             attributeFilter: ["hidden", "collapsed"]
+             attributeFilter: ["hidden", "collapsed", "placeholder"]
          });
          const sidebarObserver = new window.ResizeObserver(syncControls);
          sidebarObserver.observe(sidebar);
+         // Native window dragging makes Firefox report a spurious pointer
+         // leave, so pin the revealed toolbar from press until release.
+         const pressAttr = "floatingurlbar-compact-press";
+         const pressIgnore = `#urlbar, [${controlAttr}], #PanelUI-menu-button`;
+         // A missed mouseup (released outside the window) would strand the
+         // hold, so also drop it on the first movement with no button down.
+         const onPressMove = event => {
+             if (event.buttons === 0) {
+                 releaseToolboxPress();
+             }
+         };
+         // Descendant blurs (for example the URL input) also reach a window
+         // capture listener; only the window itself losing focus ends the hold.
+         const onWindowBlur = event => {
+             if (event.target === window) {
+                 releaseToolboxPress();
+             }
+         };
+         const releaseToolboxPress = () => {
+             toolbox.removeAttribute(pressAttr);
+             window.removeEventListener("mouseup", releaseToolboxPress, true);
+             window.removeEventListener("blur", onWindowBlur, true);
+             window.removeEventListener("mousemove", onPressMove, true);
+         };
+         const onToolboxPress = event => {
+             stopDwell();
+             if (event.button !== 0 ||
+                 !Services.prefs.getBoolPref(PREF_COMPACT, false) ||
+                 event.target?.closest?.(pressIgnore)) {
+                 return;
+             }
+             toolbox.setAttribute(pressAttr, "");
+             if (compactLayoutActive()) {
+                 toolbox.setAttribute(revealAttr, "");
+             }
+             window.addEventListener("mouseup", releaseToolboxPress, true);
+             window.addEventListener("blur", onWindowBlur, true);
+             window.addEventListener("mousemove", onPressMove, true);
+         };
+         toolbox.addEventListener("mousedown", onToolboxPress, true);
+         // A stationary pointer on the strip arms the reveal after a short
+         // dwell; brushing past cannot arm it, a press still opens at once.
+         const revealAttr = "floatingurlbar-compact-reveal";
+         const DWELL_MS = 200;
+         // Matches the CSS hide delay (transition: visibility 0s 300ms).
+         const REVEAL_GRACE_MS = 300;
+         let dwellTimer = 0;
+         let forgetTimer = 0;
+         let dwellX = null;
+         let dwellY = null;
+         const compactEnabled = () => Services.prefs.getBoolPref(PREF_COMPACT, false);
+         // The compact CSS anchors the sidebar only while its layout shows.
+         const compactLayoutActive = () =>
+             compactEnabled() &&
+             window.getComputedStyle(sidebar)?.anchorName === "--floatingurlbar-sidebar";
+         // Read the trigger height instead of mirroring the CSS constant.
+         const revealStripHeight = () => {
+             const height = Number.parseFloat(window.getComputedStyle(toolbox, "::before")?.height);
+             return Number.isFinite(height) ? height : 3;
+         };
+         const stopDwell = () => {
+             clearTimeout(dwellTimer);
+             dwellTimer = 0;
+         };
+         const forgetReveal = () => {
+             stopDwell();
+             clearTimeout(forgetTimer);
+             forgetTimer = 0;
+             dwellX = dwellY = null;
+             toolbox.removeAttribute(revealAttr);
+         };
+         const onRevealMove = event => {
+             clearTimeout(forgetTimer);
+             forgetTimer = 0;
+             if (!compactLayoutActive()) {
+                 forgetReveal();
+                 return;
+             }
+             if (toolbox.hasAttribute(revealAttr)) {
+                 // The permanent header stays usable on its own; reaching it
+                 // drops the stale readiness instead of holding the reveal.
+                 if (event.target?.closest?.(pressIgnore)) {
+                     dwellX = dwellY = null;
+                     toolbox.removeAttribute(revealAttr);
+                 }
+                 return;
+             }
+             // A held button is a press or drag, not a hover; the header and
+             // anything below the strip never arm the wait.
+             if (event.buttons || event.target?.closest?.(pressIgnore) ||
+                 !Number.isFinite(event.clientY) || event.clientY < 0 || event.clientY >= revealStripHeight()) {
+                 stopDwell();
+                 dwellX = dwellY = null;
+                 return;
+             }
+             // Only real movement restarts the wait; repeated coordinates do not.
+             if (event.clientX === dwellX && event.clientY === dwellY) {
+                 return;
+             }
+             dwellX = event.clientX;
+             dwellY = event.clientY;
+             stopDwell();
+             dwellTimer = setTimeout(() => {
+                 dwellTimer = 0;
+                 if (compactLayoutActive()) {
+                     toolbox.setAttribute(revealAttr, "");
+                 }
+             }, DWELL_MS);
+         };
+         const onRevealLeave = event => {
+             // Descendant leaves reach this listener too; only the toolbox
+             // itself leaving starts the hide grace.
+             if (event.target !== toolbox) {
+                 return;
+             }
+             stopDwell();
+             dwellX = dwellY = null;
+             // Hold the attribute through the hide grace so a quick re-entry
+             // stays open instead of waiting for the dwell again.
+             clearTimeout(forgetTimer);
+             forgetTimer = setTimeout(() => {
+                 forgetTimer = 0;
+                 toolbox.removeAttribute(revealAttr);
+             }, REVEAL_GRACE_MS);
+         };
+         const onRevealBlur = event => {
+             if (event.target === window) {
+                 forgetReveal();
+             }
+         };
          syncControls();
          toolbox.setAttribute(compactReadyAttr, "");
+         toolbox.addEventListener("mousemove", onRevealMove, true);
+         toolbox.addEventListener("mouseleave", onRevealLeave, true);
+         window.addEventListener("blur", onRevealBlur, true);
          window.addEventListener("unload", () => {
              widgetsObserver.disconnect();
              sidebarObserver.disconnect();
+             placeholder.remove();
              for (const node of controls) {
                  releaseControl(node);
              }
              document.documentElement.style.removeProperty(inputTopProp);
              document.documentElement.style.removeProperty(headerHeightProp);
+             toolbox.removeEventListener("mousedown", onToolboxPress, true);
+             toolbox.removeEventListener("mousemove", onRevealMove, true);
+             toolbox.removeEventListener("mouseleave", onRevealLeave, true);
+             window.removeEventListener("blur", onRevealBlur, true);
+             releaseToolboxPress();
+             forgetReveal();
              toolbox.removeAttribute(compactReadyAttr);
          }, { once: true });
      }

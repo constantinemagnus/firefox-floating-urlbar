@@ -135,7 +135,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firefo
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1))) -Uninstall"
 ```
 
-Removes our two files (backs up edited copies); leaves `prefs.js` untouched and keeps shared fx-autoconfig files (remove them separately only if nothing else uses them). Restart Firefox and clear the startup cache if needed. If an older version changed `browser.urlbar.openintab` and you never set it, reset it in `about:config`.
+Selects a profile, suggesting the last installed profile when available; use `--profile DIR` or `-ProfilePath DIR` to skip selection. Removes our two files (backs up edited copies); leaves `prefs.js` untouched and keeps shared fx-autoconfig files (remove them separately only if nothing else uses them). Restart Firefox and clear the startup cache if needed. If an older version changed `browser.urlbar.openintab` and you never set it, reset it in `about:config`.
 
 ## Preferences (about:config, optional)
 
@@ -175,15 +175,15 @@ Set `uc.floatingurlbar.glass` to `true` in `about:config` for the translucent ap
 
 Set `uc.floatingurlbar.compact` to `true` to put the address field and menu above expanded vertical tabs on either side. Collapsed sidebars, horizontal tabs, fullscreen and toolbar customization use the normal layout.
 
-In **Customize Toolbar**, move buttons (including pinned extensions) before the address field to show them in the compact header. Other buttons stay in the toolbar revealed by hovering near the top edge. The native **Extensions** button joins the header unless hidden in Firefox's settings; unpinned extensions remain available in its panel. The overflow button is hidden.
+Pinned extensions appear in the compact header automatically. In **Customize Toolbar**, move other buttons before the address field to show them there too. Remaining buttons stay in the toolbar revealed by hovering near the top edge. The native **Extensions** button defaults to the left, beside the menu, unless hidden in Firefox's settings; moving it before the address field sets its header order. Unpinned extensions remain available in its panel. The overflow button is hidden.
 
-Click the address field to expand it beside the sidebar and navigate in the current tab; click empty sidebar space to dismiss editing. Ctrl+T, Ctrl+L and Ctrl+K use the centered bar. In compact mode, Ctrl+K uses URL-bar search even if a separate search bar is configured.
+Click the address field to expand it beside the sidebar and navigate in the current tab; click empty sidebar space to dismiss editing. Ctrl+T, Ctrl+L and Ctrl+K use the centered bar, leaving Firefox's localized search/address placeholder in the sidebar. Click that placeholder to refocus the centered input. In compact mode, Ctrl+K uses URL-bar search even if a separate search bar is configured.
 
 Use the centered bar to change search engines or access site information and permissions, including warnings and sharing indicators; these controls are hidden in the sidebar field. Selected engines remain active. Right-side controls appear on hover or focus and while their popup is open.
 
 Pinned tabs resize automatically, scrolling at 40% of the window height. Set `uc.floatingurlbar.compact.pins.manual` to `true` to use Firefox's saved height and resize handle instead.
 
-Hover near the top edge to reveal the remaining toolbar and window controls. On Windows and Linux, a right-hand sidebar moves window controls to the left; macOS keeps native placement.
+Hold the pointer still near the top edge for a moment to reveal the remaining toolbar and window controls. On Windows and Linux, a right-hand sidebar moves window controls to the left; macOS keeps native placement.
 
 ## Other URL bar tweaks
 

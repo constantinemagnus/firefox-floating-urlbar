@@ -97,7 +97,7 @@ default_profile_raw() {
 
 # Sets the global PROFILE. Prompts if more than one candidate.
 choose_profile() {
-    local root="$1"
+    local root="$1" preferred="${2:-}"
     local names=() paths=() raws=()
     local line name path raw
 
@@ -119,12 +119,21 @@ choose_profile() {
         done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/prefs.js' \; -print | sort)
     fi
 
-    (( ${#paths[@]} > 0 )) || die "No Firefox profiles found in $root"
-
     local default_raw default_idx=-1 i
+    if [[ -n "$preferred" && -f "$preferred/prefs.js" ]]; then
+        for i in "${!paths[@]}"; do
+            if [[ "${paths[$i]}" -ef "$preferred" ]]; then default_idx="$i"; break; fi
+        done
+        if (( default_idx < 0 )); then
+            default_idx="${#paths[@]}"
+            names+=("$(basename "$preferred") (last installed)")
+            paths+=("$preferred"); raws+=("")
+        fi
+    fi
+    (( ${#paths[@]} > 0 )) || die "No Firefox profiles found in $root"
     default_raw="$(default_profile_raw "$root")"
 
-    if [[ -n "$default_raw" ]]; then
+    if (( default_idx < 0 )) && [[ -n "$default_raw" ]]; then
         for i in "${!raws[@]}"; do
             if [[ "${raws[$i]}" == "$default_raw" ]]; then
                 default_idx="$i"

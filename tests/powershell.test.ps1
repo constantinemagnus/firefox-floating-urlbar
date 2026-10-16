@@ -117,7 +117,154 @@ try {
     Add-Content "$rootFixture/profiles.ini" "[Profile2]`nName=Uninitialized`nDefault=1`nPath=unused`n[InstallTest]`nDefault=relative profile"
     function Read-Host([string]$Prompt) { return '' }
     Assert-That ((Select-FirefoxProfile $rootFixture) -eq (Join-Path $rootFixture 'relative profile')) 'installation default was confused with Default=1'
+    Assert-That ((Select-FirefoxProfile $rootFixture $ProfilePath) -eq $ProfilePath) 'remembered uninstall profile did not override Firefox default'
+    Assert-That ((Select-FirefoxProfile (Join-Path $temp 'absent discovery root') $ProfilePath) -eq $ProfilePath) 'remembered custom profile was lost when discovery failed'
     Remove-Item Function:Read-Host
+
+    # An alternate spelling of the remembered folder must match its row, not add one.
+    & {
+        function Write-Host([string]$Object) { $script:menuRows++ }
+        function Read-Host([string]$Prompt) { return '' }
+        foreach ($spelling in @(($ProfilePath + [IO.Path]::DirectorySeparatorChar), (Join-Path $ProfilePath '.'))) {
+            $script:menuRows = 0
+            $chosen = Select-FirefoxProfile $rootFixture $spelling
+            Assert-That ($chosen -eq $ProfilePath) 'alternate remembered spelling did not resolve to the profile'
+            Assert-That ($script:menuRows -eq 2) 'alternate remembered spelling added a duplicate menu row'
+        }
+    }
+
+    # Reverse case: the discovered row carries the alternate spelling.
+    & {
+        $slashRoot = Join-Path $temp 'trailing slash root'
+        [IO.Directory]::CreateDirectory("$slashRoot/slashed") | Out-Null
+        Set-Content "$slashRoot/slashed/prefs.js" 'fixture'
+        [IO.Directory]::CreateDirectory("$slashRoot/plain") | Out-Null
+        Set-Content "$slashRoot/plain/prefs.js" 'fixture'
+        [IO.File]::WriteAllText("$slashRoot/profiles.ini", "[Profile0]`r`nName=Slashed`r`nIsRelative=1`r`nPath=slashed/`r`n[Profile1]`r`nName=Plain`r`nIsRelative=1`r`nPath=plain`r`n")
+        $slashedPath = Join-Path $slashRoot 'slashed'
+        $rows = @(Get-FirefoxProfiles $slashRoot)
+        Assert-That ($rows.Count -eq 2) 'trailing-slash INI entry lost a profile'
+        Assert-That ($rows[0].Path -eq $slashedPath) 'discovered row kept its trailing separator'
+        function Write-Host([string]$Object) { $script:menuRows++ }
+        function Read-Host([string]$Prompt) { return '' }
+        $script:menuRows = 0
+        $chosen = Select-FirefoxProfile $slashRoot $slashedPath
+        Assert-That ($chosen -eq $slashedPath) 'plain remembered path did not match the alternate-spelled row'
+        Assert-That ($script:menuRows -eq 2) 'alternate-spelled row was duplicated'
+    }
+
+    # 8.3 spellings match too, but only where the volume actually mints aliases.
+    if ($env:OS -eq 'Windows_NT') {
+        & {
+            $aliasRoot = Join-Path $temp 'alias probe root'
+            $longDir = Join-Path $aliasRoot 'alias probe profile'
+            $otherDir = Join-Path $aliasRoot 'other profile'
+            foreach ($dir in @($longDir, $otherDir)) {
+                [IO.Directory]::CreateDirectory($dir) | Out-Null
+                Set-Content "$dir/prefs.js" 'fixture'
+            }
+            [IO.File]::WriteAllText("$aliasRoot/profiles.ini", "[Profile0]`r`nName=Long`r`nIsRelative=1`r`nPath=alias probe profile`r`n[Profile1]`r`nName=Other`r`nIsRelative=1`r`nPath=other profile`r`n")
+            $shortSpelling = ''
+            try {
+                $shortSpelling = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($longDir).ShortPath
+            } catch { $shortSpelling = '' }
+            if ($shortSpelling -and $shortSpelling -ne $longDir) {
+                function Write-Host([string]$Object) { $script:menuRows++ }
+                function Read-Host([string]$Prompt) { return '' }
+                $script:menuRows = 0
+                $chosen = Select-FirefoxProfile $aliasRoot $shortSpelling
+                Assert-That ($chosen -eq $longDir) '8.3 remembered spelling did not match its profile row'
+                Assert-That ($script:menuRows -eq 2) '8.3 remembered spelling added a duplicate menu row'
+            } else {
+                Write-Host 'Skipped 8.3 profile alias check: no short alias available.'
+            }
+        }
+    }
+
+    # Bare uninstall must select a profile even when a saved record exists.
+    & {
+        $Uninstall = $true
+        $ProfilePath = $null
+        $Root = $null
+        $defaultRoot = Join-Path $env:APPDATA 'Mozilla/Firefox'
+        [IO.Directory]::CreateDirectory($defaultRoot) | Out-Null
+        $first = Join-Path $defaultRoot 'first'
+        $second = Join-Path $defaultRoot 'second'
+        foreach ($profile in @($first, $second)) {
+            [IO.Directory]::CreateDirectory("$profile/chrome/JS") | Out-Null
+            [IO.Directory]::CreateDirectory("$profile/chrome/CSS") | Out-Null
+            Set-Content "$profile/prefs.js" 'preserve preferences'
+            Copy-Item "$repo/JS/replace-new-tab.uc.js" "$profile/chrome/JS/"
+            Copy-Item "$repo/CSS/firefox-floating-urlbar.uc.css" "$profile/chrome/CSS/"
+        }
+        Set-Content "$defaultRoot/profiles.ini" "[Profile0]`nName=First`nIsRelative=1`nPath=first`n[Profile1]`nName=Second`nIsRelative=1`nPath=second"
+        $state = Join-Path $env:APPDATA 'firefox-floating-urlbar/profile'
+        Set-Content $state $first
+        $script:uninstallPrompts = 0
+        function Read-Host([string]$Prompt) { $script:uninstallPrompts++; return '2' }
+        Invoke-FloatingUrlbarInstall
+        Assert-That ($script:uninstallPrompts -eq 1) 'bare uninstall skipped profile selection'
+        Assert-That (Test-Path "$first/chrome/JS/replace-new-tab.uc.js") 'uninstall changed the saved, unselected profile'
+        Assert-That (Test-Path "$first/chrome/CSS/firefox-floating-urlbar.uc.css") 'uninstall changed unselected stylesheet'
+        Assert-That (-not (Test-Path "$second/chrome/JS/replace-new-tab.uc.js")) 'uninstall ignored selection'
+        Assert-That (-not (Test-Path "$second/chrome/CSS/firefox-floating-urlbar.uc.css")) 'uninstall left selected stylesheet'
+        Assert-That ((Get-Content "$second/prefs.js") -eq 'preserve preferences') 'uninstall changed preferences'
+        Assert-That ((Get-Content $state) -eq $first) 'uninstall forgot another saved profile'
+    }
+
+    # Uninstall clears the same saved folder in any spelling, keeps others.
+    & {
+        $Uninstall = $true
+        $Root = $null
+        function Read-Host([string]$Prompt) { throw 'unexpected profile prompt' }
+        $state = Join-Path $env:APPDATA 'firefox-floating-urlbar/profile'
+        $target = Join-Path $temp 'spelling uninstall profile'
+        [IO.Directory]::CreateDirectory("$target/chrome/JS") | Out-Null
+        [IO.Directory]::CreateDirectory("$target/chrome/CSS") | Out-Null
+        Set-Content "$target/prefs.js" 'preserve preferences'
+        foreach ($spelling in @(($target + [IO.Path]::DirectorySeparatorChar), (Join-Path $target '.'))) {
+            Copy-Item "$repo/JS/replace-new-tab.uc.js" "$target/chrome/JS/"
+            Copy-Item "$repo/CSS/firefox-floating-urlbar.uc.css" "$target/chrome/CSS/"
+            Set-Content $state $spelling
+            $ProfilePath = $target
+            Invoke-FloatingUrlbarInstall
+            Assert-That (-not (Test-Path "$target/chrome/JS/replace-new-tab.uc.js")) 'alternate saved spelling left payload'
+            Assert-That (-not (Test-Path $state)) 'alternate saved spelling did not clear state'
+            Assert-That ((Get-Content "$target/prefs.js") -eq 'preserve preferences') 'alternate spelling changed preferences'
+        }
+        if ($env:OS -eq 'Windows_NT') {
+            $shortSpelling = ''
+            try { $shortSpelling = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($target).ShortPath } catch { $shortSpelling = '' }
+            if ($shortSpelling -and $shortSpelling -ne $target) {
+                Copy-Item "$repo/JS/replace-new-tab.uc.js" "$target/chrome/JS/"
+                Set-Content $state $shortSpelling
+                $ProfilePath = $target
+                Invoke-FloatingUrlbarInstall
+                Assert-That (-not (Test-Path $state)) '8.3 saved spelling did not clear state'
+            }
+        }
+        Copy-Item "$repo/JS/replace-new-tab.uc.js" "$target/chrome/JS/"
+        $other = Join-Path $temp 'other saved profile'
+        [IO.Directory]::CreateDirectory($other) | Out-Null
+        Set-Content "$other/prefs.js" 'fixture'
+        Set-Content $state $other
+        $ProfilePath = $target
+        Invoke-FloatingUrlbarInstall
+        Assert-That (-not (Test-Path "$target/chrome/JS/replace-new-tab.uc.js")) 'uninstall left selected payload'
+        Assert-That ((Get-Content $state) -eq $other) 'uninstall cleared a different saved profile'
+        Copy-Item "$repo/JS/replace-new-tab.uc.js" "$target/chrome/JS/"
+        Set-Content $state 'not a path :::'
+        $ProfilePath = $target
+        Invoke-FloatingUrlbarInstall
+        Assert-That (-not (Test-Path "$target/chrome/JS/replace-new-tab.uc.js")) 'malformed record blocked uninstall'
+        Assert-That ((Get-Content $state) -eq 'not a path :::') 'uninstall dropped a malformed record'
+        Copy-Item "$repo/JS/replace-new-tab.uc.js" "$target/chrome/JS/"
+        [IO.File]::WriteAllText($state, '')
+        $ProfilePath = $target
+        Invoke-FloatingUrlbarInstall
+        Assert-That (-not (Test-Path "$target/chrome/JS/replace-new-tab.uc.js")) 'empty record blocked uninstall'
+        Assert-That ((Test-Path -LiteralPath $state -PathType Leaf) -and ([string](Get-Content -LiteralPath $state -Raw)).Trim() -eq '') 'uninstall dropped an empty record'
+    }
 
     # Stale INI entries must not hide initialized profile folders.
     $fallbackRoot = Join-Path $temp 'fallback profile root'
