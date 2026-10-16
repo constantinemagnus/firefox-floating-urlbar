@@ -54,6 +54,15 @@
     --floatingurlbar-left: anchor(left);
     --floatingurlbar-width: 100cqi;
     --floatingurlbar-margin-top: 0px;
+    /* Use the painted input height for concentric popup corners. */
+    --urlbar-background-border-top-radius-open: calc(
+        min(var(--urlbar-background-border-radius), var(--floatingurlbar-height) / 2) +
+        var(--urlbar-background-overhang-open, 8px)
+    );
+    }
+
+    #floatingurlbar-sidebar-placeholder {
+        display: none;
     }
 
     /* Keep the input out of toolbar layout in both states. Returning an
@@ -291,10 +300,15 @@
                     left: 0 !important;
                     width: 100% !important;
                     z-index: 5 !important;
+                    /* Floating toolbars lose the themed window backing painted by body. */
+                    background-color: inherit;
+                    background-image: var(--toolbox-background-image, none);
+                    background-position: var(--toolbox-background-position, right top);
+                    background-repeat: var(--toolbox-background-repeat, no-repeat);
+                    background-size: var(--toolbox-background-size, auto);
                     visibility: hidden;
                     transform: none !important;
                     opacity: 1 !important;
-                    /* Allow small pointer slips before hiding the toolbar. */
                     transition: visibility 0s 300ms !important;
                 }
                 #navigator-toolbox[floatingurlbar-compact-ready]::before {
@@ -303,19 +317,21 @@
                     top: 0;
                     left: 0;
                     right: 0;
-                    height: 12px;
+                    height: 3px;
                     visibility: visible;
                     pointer-events: auto;
                 }
-                /* Operating the permanent header must not reveal the strip. */
-                #navigator-toolbox[floatingurlbar-compact-ready]:hover:not(:has(
+                /* The strip arms only after JS times a stationary hover, so
+                 * brushing the edge cannot arm it; a press still opens at once. */
+                #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-reveal]:hover:not(:has(
                     :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button):hover
                 )) {
                     visibility: visible;
-                    transition: visibility 0s 250ms !important;
+                    transition: none !important;
                 }
                 #navigator-toolbox[floatingurlbar-compact-ready]:has(toolbarbutton[open="true"]:not(#urlbar *)),
                 #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-native-focus],
+                #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-press],
                 #mainPopupSet:has(> [panelopen]:not(#tab-preview-panel)) ~ #navigator-toolbox[floatingurlbar-compact-ready] {
                     visibility: visible;
                     transition: none !important;
@@ -338,6 +354,45 @@
                 #urlbar > :is(.urlbar-input-container, .urlbarView),
                 #urlbar :is(panel, menupopup) {
                     pointer-events: auto;
+                }
+                /* The relocated input leaves the native URL-bar wrapper as an
+                 * empty strip across the toolbar. Keep its window drag while
+                 * the strip is hovered, and keep the moved field no-drag, so
+                 * the hidden overlay never steals page drags. Reuse the reveal
+                 * exclusion: hovering the permanent header must not expose the
+                 * hidden strip's drag region. */
+                #navigator-toolbox[floatingurlbar-compact-ready]:hover:not(:has(
+                    :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button):hover
+                )) :is(#urlbar-container, #urlbar) {
+                    -moz-window-dragging: drag !important;
+                }
+                #urlbar > :is(.urlbar-input-container, .urlbarView, #urlbar-background, .urlbar-background) {
+                    -moz-window-dragging: no-drag !important;
+                }
+                /* Keep the sidebar slot usable while its real input floats. */
+                #urlbar[floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold]) > #floatingurlbar-sidebar-placeholder {
+                    display: block;
+                    position: fixed;
+                    position-anchor: --floatingurlbar-sidebar;
+                    position-visibility: always;
+                    top: calc(anchor(top) + var(--floatingurlbar-compact-input-top, 40px));
+                    left: calc(anchor(left) + 8px);
+                    width: calc(anchor-size(width) - 16px);
+                    height: 32px;
+                    box-sizing: border-box;
+                    margin: 0;
+                    padding-inline: 12px;
+                    border: var(--urlbar-background-border);
+                    border-radius: var(--urlbar-background-border-radius);
+                    background: var(--urlbar-background-color, Field);
+                    color: color-mix(in srgb, var(--toolbar-field-text-color, FieldText) 70%, transparent);
+                    font: inherit;
+                    text-align: start;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    pointer-events: auto;
+                    -moz-window-dragging: no-drag;
                 }
                 #urlbar > :is(.urlbar-input-container, .urlbar-background, #urlbar-background, .urlbarView) {
                     position-visibility: always !important;

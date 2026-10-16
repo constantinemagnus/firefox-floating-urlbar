@@ -1,0 +1,84 @@
+name: Platform tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x86_64
+          - runner: macos-15
+            arch: arm64
+    defaults:
+      run:
+        shell: /bin/bash -e -o pipefail {0}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Verify native architecture and system Bash
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          /bin/bash --version
+          /usr/bin/stat -f '%l' .
+      - name: Mocked Firefox logic and syntax
+        run: |
+          node --check JS/replace-new-tab.uc.js
+          node --test tests/urlbar.test.cjs
+      - name: Installer and filesystem regressions with macOS tools
+        run: |
+          export PATH="/bin:/usr/bin:/usr/sbin:/sbin:$PATH"
+          bash -n install.sh update.sh uninstall.sh lib.sh autoconfig.sh install-remote.sh tests/*.sh
+          bash tests/shell.test.sh
+          bash tests/macos.test.sh
+
+  windows:
+    name: Windows (PowerShell 5.1 and 7)
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Mocked Firefox logic and syntax
+        shell: pwsh
+        run: |
+          node --check JS/replace-new-tab.uc.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test tests/urlbar.test.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Windows PowerShell 5.1 installation and filesystem regressions
+        shell: powershell
+        run: |
+          $PSVersionTable
+          & ./tests/powershell.test.ps1
+      - name: PowerShell 7 installation and filesystem regressions
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $PSVersionTable
+          & ./tests/powershell.test.ps1

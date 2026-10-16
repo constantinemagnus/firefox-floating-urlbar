@@ -3,7 +3,8 @@
 set -euo pipefail
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
-trap 'rm -rf -- "$TEST_DIR"' EXIT
+TEST_DIR="$(cd -- "$TEST_DIR" && pwd -P)"
+trap 'test_status=$?; if (( test_status )); then tail -n 40 "$TEST_DIR"/*.log 2>/dev/null || true; fi; rm -rf -- "$TEST_DIR"; exit "$test_status"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # Both distribution paths must fetch the same upstream snapshot.
@@ -30,7 +31,7 @@ done
 export TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/source.tar.gz"
 tar -czf "$TEST_AUTOCONFIG_ARCHIVE" -C "$TEST_DIR/source" fx-autoconfig-fixture
 printf 'AUTOCONFIG_COMMIT=fixture\nAUTOCONFIG_TAR_SHA256=%s\n' \
-    "$(sha256sum "$TEST_AUTOCONFIG_ARCHIVE" | awk '{ print $1 }')" > "$TEST_DIR/checkout/fx-autoconfig.conf"
+    "$(source "$REPO_DIR/autoconfig.sh"; autoconfig_sha256 "$TEST_AUTOCONFIG_ARCHIVE")" > "$TEST_DIR/checkout/fx-autoconfig.conf"
 export TEST_DOWNLOAD_TRACE="$TEST_DIR/downloads"
 cat > "$TEST_DIR/bin/curl" <<'CURL'
 #!/usr/bin/env bash
@@ -70,7 +71,7 @@ grep -q 'https://github.com/MrOtherGuy/fx-autoconfig/tree/fixture' "$case_profil
 [[ -f "$case_profile/chrome/JS/replace-new-tab.uc.js" && -f "$case_profile/chrome/CSS/firefox-floating-urlbar.uc.css" ]] || fail 'project payload missing'
 [[ "$(cat "$case_profile/prefs.js")" == 'unchanged prefs' ]] || fail 'prefs changed'
 run_install
-[[ "$(wc -l < "$TEST_DOWNLOAD_TRACE")" == 1 ]] || fail 'downloaded again on unchanged reinstall'
+(( $(wc -l < "$TEST_DOWNLOAD_TRACE") == 1 )) || fail 'downloaded again on unchanged reinstall'
 
 # An upgrade of our loader keeps a backup; third-party loaders remain untouched.
 printf 'older\n' > "$case_profile/chrome/utils/.floating-urlbar-source"
@@ -82,7 +83,7 @@ rm "$case_profile/chrome/utils/.floating-urlbar-source"
 printf 'third-party loader\n' > "$case_profile/chrome/utils/boot.sys.mjs"
 run_install
 [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'third-party loader' ]] || fail 'replaced existing loader'
-[[ "$(wc -l < "$TEST_DOWNLOAD_TRACE")" == 2 ]] || fail 'existing loader triggered download'
+(( $(wc -l < "$TEST_DOWNLOAD_TRACE") == 2 )) || fail 'existing loader triggered download'
 
 # Existing loaders are preserved, with a warning if standard startup files are missing.
 for startup in config.js defaults/pref/config-prefs.js; do
@@ -92,7 +93,7 @@ for startup in config.js defaults/pref/config-prefs.js; do
         fail 'existing loader with missing startup file did not warn'
     [[ ! -e "$case_firefox/$startup" ]] || fail 'changed externally managed startup configuration'
     [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'third-party loader' ]] || fail 'changed external loader during startup check'
-    [[ "$(wc -l < "$TEST_DOWNLOAD_TRACE")" == 2 ]] || fail 'external loader startup check triggered download'
+    (( $(wc -l < "$TEST_DOWNLOAD_TRACE") == 2 )) || fail 'external loader startup check triggered download'
     cp "$fixture/program/$startup" "$case_firefox/$startup"
 done
 
@@ -106,7 +107,7 @@ for startup in config.js defaults/pref/config-prefs.js; do
     run_install
     cmp "$fixture/program/$startup" "$case_firefox/$startup" || fail "did not restore managed $startup"
     [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'preserve local loader edit' ]] || fail 'startup repair overwrote profile loader'
-    [[ "$(wc -l < "$TEST_DOWNLOAD_TRACE")" == "$(( downloads_before + 1 ))" ]] || fail 'startup repair did not fetch verified source'
+    (( $(wc -l < "$TEST_DOWNLOAD_TRACE") == downloads_before + 1 )) || fail 'startup repair did not fetch verified source'
 done
 # Missing notices are repaired without replacing a locally edited loader.
 for notice in fx-autoconfig.LICENSE fx-autoconfig.txt; do
@@ -117,7 +118,7 @@ for notice in fx-autoconfig.LICENSE fx-autoconfig.txt; do
 done
 downloads_before="$(wc -l < "$TEST_DOWNLOAD_TRACE")"
 run_install
-[[ "$(wc -l < "$TEST_DOWNLOAD_TRACE")" == "$downloads_before" ]] || fail 'repaired install downloaded again'
+(( $(wc -l < "$TEST_DOWNLOAD_TRACE") == downloads_before )) || fail 'repaired install downloaded again'
 [[ "$(cat "$case_profile/prefs.js")" == 'unchanged prefs' ]] || fail 'startup repair changed prefs'
 
 # Repair keeps the same checksum and conflict protections as first-time setup.
@@ -294,7 +295,7 @@ if (
         fail 'PATH fallback did not find the real installation after a stale profile hint'
 )
 
-# macOS resource directories and BSD stat are exercised without macOS hardware.
+# Exercise the resource-directory layout everywhere, using native BSD stat on macOS.
 mkdir -p "$TEST_DIR/Firefox.app/Contents/Resources" "$TEST_DIR/Firefox.app/Contents/MacOS"
 cp "$case_firefox/firefox" "$TEST_DIR/Firefox.app/Contents/MacOS/firefox"
 printf '[App]\n' > "$TEST_DIR/Firefox.app/Contents/Resources/application.ini"
@@ -302,10 +303,12 @@ printf '[App]\n' > "$TEST_DIR/Firefox.app/Contents/Resources/application.ini"
     source "$REPO_DIR/lib.sh"
     source "$REPO_DIR/autoconfig.sh"
     [[ "$(find_firefox_directory "$case_profile" "$TEST_DIR/Firefox.app/Contents/Resources")" == "$TEST_DIR/Firefox.app/Contents/Resources" ]] || fail 'macOS resource directory detection'
-    uname() { printf 'Darwin\n'; }
-    stat() { [[ "$1 $2" == '-f %l' ]] || fail 'wrong BSD stat flags'; command stat -c %h "$3"; }
+    if [[ "$(uname -s)" != Darwin ]]; then
+        uname() { printf 'Darwin\n'; }
+        stat() { [[ "$1 $2" == '-f %l' ]] || fail 'wrong BSD stat flags'; command stat -c %h "$3"; }
+    fi
     require_file_destination "$case_profile/prefs.js"
     ln "$case_profile/prefs.js" "$TEST_DIR/hardlinked-prefs"
     if (require_file_destination "$TEST_DIR/hardlinked-prefs") >/dev/null 2>&1; then fail 'BSD hardlink guard failed'; fi
 )
-echo 'AutoConfig regressions passed (offline fixtures, temporary installations, mocked macOS/package detection).'
+echo 'AutoConfig regressions passed (offline fixtures, temporary installations, mocked package detection).'

@@ -4,6 +4,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
+TEST_DIR="$(cd -- "$TEST_DIR" && pwd -P)"
 trap 'rm -rf -- "$TEST_DIR"' EXIT
 export XDG_CONFIG_HOME="$TEST_DIR/config"
 # shellcheck source=../lib.sh
@@ -97,6 +98,49 @@ bash "$REPO_DIR/uninstall.sh" --profile "$PROFILE_B" > "$TEST_DIR/repeat-uninsta
 ln -s "$PROFILE_B" "$TEST_DIR/profile alias"
 bash "$REPO_DIR/uninstall.sh" --profile "$TEST_DIR/profile alias" > "$TEST_DIR/alias-uninstall.log" 2>&1
 [[ ! -e "$SAVED_PROFILE_FILE" ]] || fail "uninstall alias did not clear matching saved profile"
+
+# Bare uninstall must choose among discovered profiles even with a saved one.
+choice_root="$TEST_DIR/choose-root"
+mkdir -p "$choice_root"
+cp -a "$PROFILE_A" "$choice_root/first"
+cp -a "$PROFILE_A" "$choice_root/second"
+printf '[Profile0]\nName=First\nIsRelative=1\nPath=first\n[Profile1]\nName=Second\nIsRelative=1\nPath=second\n' > "$choice_root/profiles.ini"
+save_profile "$PROFILE_A"
+if printf '0\n' | PROFILE_ROOT="$choice_root" bash "$REPO_DIR/uninstall.sh" > "$TEST_DIR/invalid-choice.log" 2>&1; then
+    fail "uninstall accepted invalid profile selection"
+fi
+[[ -f "$choice_root/first/chrome/JS/replace-new-tab.uc.js" && -f "$choice_root/second/chrome/JS/replace-new-tab.uc.js" ]] || fail "invalid selection removed files"
+printf '2\n' | PROFILE_ROOT="$choice_root" bash "$REPO_DIR/uninstall.sh" > "$TEST_DIR/choose-uninstall.log" 2>&1
+[[ -f "$PROFILE_A/chrome/JS/replace-new-tab.uc.js" ]] || fail "bare uninstall silently reused saved profile"
+[[ -f "$choice_root/first/chrome/JS/replace-new-tab.uc.js" && -f "$choice_root/first/chrome/CSS/firefox-floating-urlbar.uc.css" ]] || fail "uninstall changed unselected profile"
+[[ ! -f "$choice_root/second/chrome/JS/replace-new-tab.uc.js" && ! -f "$choice_root/second/chrome/CSS/firefox-floating-urlbar.uc.css" ]] || fail "uninstall ignored chosen profile"
+[[ -f "$choice_root/second/prefs.js" && -f "$choice_root/second/chrome/utils/boot.sys.mjs" ]] || fail "uninstall removed preferences or shared loader"
+[[ "$(load_saved_profile)" == "$PROFILE_A" ]] || fail "choosing another profile forgot saved profile"
+
+# A remembered custom profile stays selectable and is the Enter suggestion.
+choose_profile "$choice_root" "$PROFILE_A" <<< '' > "$TEST_DIR/preferred-choice.log"
+[[ "$PROFILE" -ef "$PROFILE_A" ]] || fail "chooser ignored remembered profile outside discovered root"
+chooser_repo="$TEST_DIR/uninstall-discovery-fixture"
+mkdir -p "$chooser_repo"
+cp "$REPO_DIR/uninstall.sh" "$chooser_repo/"
+cat "$REPO_DIR/lib.sh" > "$chooser_repo/lib.sh"
+cat >> "$chooser_repo/lib.sh" <<'FIXTURE'
+find_profile_root() {
+    [[ -n "${TEST_UNINSTALL_ROOT:-}" ]] || return 1
+    printf '%s\n' "$TEST_UNINSTALL_ROOT"
+}
+FIXTURE
+for discovery in found missing; do
+    custom_profile="$TEST_DIR/custom-$discovery/profile"
+    mkdir -p "$(dirname "$custom_profile")"
+    cp -a "$PROFILE_A" "$custom_profile"
+    save_profile "$custom_profile"
+    TEST_UNINSTALL_ROOT="$([[ "$discovery" == found ]] && echo "$choice_root")" \
+        bash "$chooser_repo/uninstall.sh" <<< '' > "$TEST_DIR/custom-$discovery.log" 2>&1
+    [[ ! -f "$custom_profile/chrome/JS/replace-new-tab.uc.js" ]] || fail "bare uninstall lost custom profile with $discovery discovery"
+    [[ -f "$choice_root/first/chrome/JS/replace-new-tab.uc.js" ]] || fail "remembered default removed a discovered profile"
+    [[ -f "$custom_profile/prefs.js" && -f "$custom_profile/chrome/utils/boot.sys.mjs" ]] || fail "custom-root uninstall removed preferences or shared loader"
+done
 
 # Empty explicit values must fail before discovery or Git. Include a safe root
 # or profile in every invocation so a regression cannot choose a real profile.
@@ -302,13 +346,13 @@ check_update profile
 check_update
 [[ "$(sed -n '2,3p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --profile "$PROFILE_A")" ]] || fail "default saved profile not reused"
 check_update --choose
-[[ "$(wc -l < "$TEST_INSTALL_TRACE")" == 1 ]] || fail "choose reused saved profile"
+(( $(wc -l < "$TEST_INSTALL_TRACE") == 1 )) || fail "choose reused saved profile"
 check_update --firefox-dir '/temporary Firefox'
 [[ "$(sed -n '2,3p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --firefox-dir '/temporary Firefox')" ]] || fail "Firefox directory not forwarded"
 [[ "$(sed -n '4,5p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --profile "$PROFILE_A")" ]] || fail "Firefox directory suppressed saved profile"
 export PROFILE_ROOT="$TEST_DIR/root-b"
 check_update
-[[ "$(wc -l < "$TEST_INSTALL_TRACE")" == 1 ]] || fail "environment root overridden"
+(( $(wc -l < "$TEST_INSTALL_TRACE") == 1 )) || fail "environment root overridden"
 
 rm -f -- "$TEST_GIT_TRACE" "$TEST_INSTALL_TRACE" "$TEST_UPSTREAM_QUERIED"
 if TEST_GIT_SCENARIO=ahead bash "$TEST_DIR/updater/update.sh" --yes > "$TEST_DIR/ahead.log" 2>&1; then

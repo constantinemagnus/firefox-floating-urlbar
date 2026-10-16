@@ -33,13 +33,13 @@ while (( $# > 0 )); do
 done
 
 if [[ -z "$PROFILE" ]]; then
-    if [[ -z "${PROFILE_ROOT:-}" ]] && saved="$(load_saved_profile)"; then
-        PROFILE="$saved"
-        echo "Using saved profile: $PROFILE"
-    else
-        PROFILE_ROOT="$(find_profile_root)" || die "Could not find a Firefox profile folder. Use --root DIR or --profile DIR."
-        choose_profile "$PROFILE_ROOT"
+    preferred=""
+    if [[ -z "${PROFILE_ROOT:-}" ]]; then preferred="$(load_saved_profile)" || preferred=""; fi
+    if ! PROFILE_ROOT="$(find_profile_root)"; then
+        [[ -n "$preferred" ]] || die "Could not find a Firefox profile folder. Use --root DIR or --profile DIR."
+        PROFILE_ROOT="$(dirname -- "$preferred")"
     fi
+    choose_profile "$PROFILE_ROOT" "$preferred"
 fi
 
 [[ -d "$PROFILE" ]] || die "Profile does not exist: $PROFILE"

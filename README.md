@@ -38,7 +38,7 @@ By default, the bar opens and closes without animation and dims the background b
 
 - Firefox. The installers set up [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) when needed, or reuse an existing loader.
 - CSS anchor positioning support. Without it, the stylesheet has no effect and the bar stays in its normal position.
-- Tested on Firefox 157.0.1 on Linux; Windows local install verified. Windows remote install/uninstall and macOS are untested.
+- Firefox UI tested on Firefox 157.0.1 on Linux. Installer regressions run on Windows and macOS (Intel and Apple Silicon); GUI behavior and elevation prompts on those platforms still need manual testing.
 - The script uses Firefox's internal URL bar APIs. If required APIs are missing, it logs a warning in the Browser Console and preserves normal Ctrl+T behavior.
 
 > These files run with full browser privileges. Read them before installing.
@@ -67,7 +67,7 @@ Options: `--profile /path/to/profile`, `--root DIR`, `--firefox-dir /path/to/fir
 
 ### Windows
 
-Local install verified; remote install/uninstall untested.
+Local install verified; remote network installation and UAC prompts still need manual testing.
 
 One-command:
 
@@ -135,7 +135,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firefo
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1))) -Uninstall"
 ```
 
-Removes our two files (backs up edited copies); leaves `prefs.js` untouched and keeps shared fx-autoconfig files (remove them separately only if nothing else uses them). Restart Firefox and clear the startup cache if needed. If an older version changed `browser.urlbar.openintab` and you never set it, reset it in `about:config`.
+Selects a profile, suggesting the last installed profile when available; use `--profile DIR` or `-ProfilePath DIR` to skip selection. Removes our two files (backs up edited copies); leaves `prefs.js` untouched and keeps shared fx-autoconfig files (remove them separately only if nothing else uses them). Restart Firefox and clear the startup cache if needed. If an older version changed `browser.urlbar.openintab` and you never set it, reset it in `about:config`.
 
 ## Preferences (about:config, optional)
 
@@ -175,15 +175,15 @@ Set `uc.floatingurlbar.glass` to `true` in `about:config` for the translucent ap
 
 Set `uc.floatingurlbar.compact` to `true` to put the address field and menu above expanded vertical tabs on either side. Collapsed sidebars, horizontal tabs, fullscreen and toolbar customization use the normal layout.
 
-In **Customize Toolbar**, move buttons (including pinned extensions) before the address field to show them in the compact header. Other buttons stay in the toolbar revealed by hovering near the top edge. The native **Extensions** button joins the header unless hidden in Firefox's settings; unpinned extensions remain available in its panel. The overflow button is hidden.
+Pinned extensions appear in the compact header automatically. In **Customize Toolbar**, move other buttons before the address field to show them there too. Remaining buttons stay in the toolbar revealed by hovering near the top edge. The native **Extensions** button defaults to the left, beside the menu, unless hidden in Firefox's settings; moving it before the address field sets its header order. Unpinned extensions remain available in its panel. The overflow button is hidden.
 
-Click the address field to expand it beside the sidebar and navigate in the current tab; click empty sidebar space to dismiss editing. Ctrl+T, Ctrl+L and Ctrl+K use the centered bar. In compact mode, Ctrl+K uses URL-bar search even if a separate search bar is configured.
+Click the address field to expand it beside the sidebar and navigate in the current tab; click empty sidebar space to dismiss editing. Ctrl+T, Ctrl+L and Ctrl+K use the centered bar, leaving Firefox's localized search/address placeholder in the sidebar. Click that placeholder to refocus the centered input. In compact mode, Ctrl+K uses URL-bar search even if a separate search bar is configured.
 
 Use the centered bar to change search engines or access site information and permissions, including warnings and sharing indicators; these controls are hidden in the sidebar field. Selected engines remain active. Right-side controls appear on hover or focus and while their popup is open.
 
 Pinned tabs resize automatically, scrolling at 40% of the window height. Set `uc.floatingurlbar.compact.pins.manual` to `true` to use Firefox's saved height and resize handle instead.
 
-Hover near the top edge to reveal the remaining toolbar and window controls. On Windows and Linux, a right-hand sidebar moves window controls to the left; macOS keeps native placement.
+Hold the pointer still near the top edge for a moment to reveal the remaining toolbar and window controls. On Windows and Linux, a right-hand sidebar moves window controls to the left; macOS keeps native placement.
 
 ## Other URL bar tweaks
 
@@ -203,9 +203,14 @@ To debug, set `uc.floatingurlbar.debug` to `true` in `about:config`, restart Fir
 node --test tests/urlbar.test.cjs
 bash tests/shell.test.sh
 pwsh -NoProfile -File tests/powershell.test.ps1
+bash tests/macos.test.sh # native macOS only
 ```
 
-Tests use mocks and temporary files. The PowerShell suite requires PowerShell and uses symbolic links; on Windows it needs Developer Mode or administrator rights for those fixtures. Visual changes and platform-specific elevation still require testing in Firefox on each OS.
+The [platform workflow](.github/workflows/platform-tests.yml) runs on GitHub-hosted Windows and macOS runners, including Intel and Apple Silicon. Windows exercises PowerShell 5.1 and 7; macOS uses system Bash and BSD tools. It runs on pushes and pull requests, and can be started manually after the workflow reaches the default branch.
+
+Installer tests use isolated temporary profiles, application directories and offline download fixtures. They check profile discovery/selection, installation, removal, backups and filesystem protections. The macOS suite also checks app-bundle paths, Unicode and bracketed profile names, `shasum`, and case-insensitive profile identity where supported. The JavaScript suite mocks Firefox objects.
+
+The PowerShell suite uses symbolic links; local Windows runs need Developer Mode or administrator rights. Firefox appearance, native window dragging, keyboard behavior in the GUI, and elevation prompts still require manual testing on each OS. CI does not launch Firefox or modify real profiles.
 
 ## License and attribution
 

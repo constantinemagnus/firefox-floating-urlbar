@@ -4,6 +4,7 @@
 set -euo pipefail
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
+TEST_DIR="$(cd -- "$TEST_DIR" && pwd -P)"
 trap 'rm -rf -- "$TEST_DIR"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 

@@ -40,6 +40,29 @@ function Copy-WithBackup([string]$Source, [string]$Destination) {
     Copy-Item -LiteralPath $Source -Destination $Destination
 }
 
+function Get-NormalizedProfilePath([string]$Path) {
+    if (-not $Path) { return '' }
+    $resolved = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    # Preserve drive roots such as C:\.
+    if ($resolved.Length -gt 3) { $resolved = $resolved.TrimEnd('\', '/') }
+    return $resolved
+}
+
+function Test-SameProfilePath([string]$First, [string]$Second) {
+    if (-not $First -or -not $Second) { return $false }
+    try {
+        $firstPath = Get-NormalizedProfilePath $First
+        $secondPath = Get-NormalizedProfilePath $Second
+    } catch { return $false }
+    if ($firstPath -eq $secondPath) { return $true }
+    if ($env:OS -ne 'Windows_NT') { return $false }
+    # One read-only lookup canonicalizes 8.3 spellings to the same key.
+    try {
+        $files = New-Object -ComObject Scripting.FileSystemObject
+        return $files.GetFolder($firstPath).ShortPath -eq $files.GetFolder($secondPath).ShortPath
+    } catch { return $false }
+}
+
 function Get-FirefoxProfiles([string]$Directory) {
     if (-not (Test-Path -LiteralPath $Directory -PathType Container)) { return }
     $entries = @()
@@ -63,8 +86,10 @@ function Get-FirefoxProfiles([string]$Directory) {
         $path = if ($entry['IsRelative'] -eq '0') { $entry['Path'] }
                 else { Join-Path $Directory $entry['Path'] }
         if (Test-Path -LiteralPath (Join-Path $path 'prefs.js')) {
+            # Use the same form as the remembered path.
+            $path = Get-NormalizedProfilePath $path
             $found = $true
-            [pscustomobject]@{ Name = $entry['Name']; Path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path); Raw = $entry['Path'] }
+            [pscustomobject]@{ Name = $entry['Name']; Path = $path; Raw = $entry['Path'] }
         }
     }
     if (-not $found) {
@@ -79,8 +104,20 @@ function Get-FirefoxProfiles([string]$Directory) {
     }
 }
 
-function Select-FirefoxProfile([string]$Directory) {
+function Select-FirefoxProfile([string]$Directory, [string]$PreferredProfile = '') {
     $profiles = @(Get-FirefoxProfiles $Directory)
+    $preferredIndex = -1
+    if ($PreferredProfile -and (Test-Path -LiteralPath (Join-Path $PreferredProfile 'prefs.js') -PathType Leaf)) {
+        # Trailing separators and 8.3 spellings must not add a duplicate row.
+        $preferredPath = Get-NormalizedProfilePath $PreferredProfile
+        for ($i = 0; $i -lt $profiles.Count; $i++) {
+            if (Test-SameProfilePath $profiles[$i].Path $preferredPath) { $preferredIndex = $i; break }
+        }
+        if ($preferredIndex -lt 0) {
+            $preferredIndex = $profiles.Count
+            $profiles += [pscustomobject]@{ Name = "$(Split-Path $preferredPath -Leaf) (last installed)"; Path = $preferredPath; Raw = '' }
+        }
+    }
     if ($profiles.Count -eq 0) { throw "No initialized Firefox profiles found in $Directory. Start Firefox once first." }
     if ($profiles.Count -eq 1) { return $profiles[0].Path }
     $default = ''
@@ -100,6 +137,7 @@ function Select-FirefoxProfile([string]$Directory) {
         if ($profiles[$i].Raw -eq $default -and $default) { $defaultIndex = $i }
         Write-Host "$($i + 1). $($profiles[$i].Name) ($($profiles[$i].Path))"
     }
+    if ($preferredIndex -ge 0) { $defaultIndex = $preferredIndex }
     $prompt = if ($defaultIndex -ge 0) { "Select profile (Enter = $($defaultIndex + 1))" } else { 'Select profile' }
     $choice = Read-Host $prompt
     if (-not $choice -and $defaultIndex -ge 0) { return $profiles[$defaultIndex].Path }
@@ -290,13 +328,18 @@ function Invoke-FloatingUrlbarInstall {
     if (-not $env:APPDATA) { throw 'APPDATA is not set. Run this installer on Windows.' }
     $stateDirectory = Join-Path $env:APPDATA 'firefox-floating-urlbar'
     $stateFile = Join-Path $stateDirectory 'profile'
+    Assert-Destination $stateDirectory -Directory
+    Assert-Destination $stateFile
     if (-not $ProfilePath) {
-        if ($Uninstall -and -not $Root -and (Test-Path -LiteralPath $stateFile)) {
-            $ProfilePath = (Get-Content -LiteralPath $stateFile -Raw).Trim()
-        } else {
-            if (-not $Root) { $Root = Join-Path $env:APPDATA 'Mozilla/Firefox' }
-            $ProfilePath = Select-FirefoxProfile $Root
+        $preferredProfile = ''
+        if ($Uninstall -and -not $Root -and (Test-Path -LiteralPath $stateFile -PathType Leaf)) {
+            $saved = "$(Get-Content -LiteralPath $stateFile -Raw)".Trim()
+            if ([IO.Path]::IsPathRooted($saved) -and (Test-Path -LiteralPath (Join-Path $saved 'prefs.js') -PathType Leaf)) {
+                $preferredProfile = $saved
+            }
         }
+        if (-not $Root) { $Root = Join-Path $env:APPDATA 'Mozilla/Firefox' }
+        $ProfilePath = Select-FirefoxProfile $Root $preferredProfile
     }
     $ProfilePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ProfilePath)
     Assert-Destination $ProfilePath -Directory
@@ -311,8 +354,6 @@ function Invoke-FloatingUrlbarInstall {
         'CSS/firefox-floating-urlbar.uc.css' = 'chrome/CSS/firefox-floating-urlbar.uc.css'
     }
     foreach ($path in $payloads.Values) { Assert-Destination (Join-Path $ProfilePath $path) }
-    Assert-Destination $stateDirectory -Directory
-    Assert-Destination $stateFile
     if (@(Get-Process -Name firefox -ErrorAction SilentlyContinue).Count) {
         Write-Warning 'Firefox is running. Restart it after installation or removal.'
     }
@@ -334,8 +375,12 @@ function Invoke-FloatingUrlbarInstall {
         } else { Copy-WithBackup (Join-Path $PSScriptRoot $source) $destination }
     }
     if ($Uninstall) {
-        if ((Test-Path -LiteralPath $stateFile) -and
-            (Get-Content -LiteralPath $stateFile -Raw).Trim() -eq $ProfilePath) { Remove-Item -LiteralPath $stateFile }
+        # Match the chooser's folder comparison when clearing saved state.
+        $savedProfile = ''
+        if (Test-Path -LiteralPath $stateFile -PathType Leaf) { $savedProfile = "$(Get-Content -LiteralPath $stateFile -Raw)".Trim() }
+        if ($savedProfile -and [IO.Path]::IsPathRooted($savedProfile) -and (Test-SameProfilePath $savedProfile $ProfilePath)) {
+            Remove-Item -LiteralPath $stateFile
+        }
         Write-Host 'Project files removed. Shared fx-autoconfig files remain installed.'
     } else {
         [IO.Directory]::CreateDirectory($stateDirectory) | Out-Null
