@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, "../JS/replace-new-tab.uc.js
 
 function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missingCommitAPI = false,
     fallbackResult = Promise.resolve({}), configureUrlbar, prefs = {}, anchorSupport = true, compactControls = false,
-    separateSearchBar = null, revealStripHeight = "3px" } = {}) {
+    separateSearchBar = null, revealStripHeight = "3px", nativeCaptions = false, platform = "Linux" } = {}) {
     class Element {
         constructor(id) {
             this.id = id;
@@ -59,6 +59,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
             }
         }
         contains(node) { return node === this || this.children.some(child => child.contains(node)); }
+        getBoundingClientRect() { return this.rect || { width: 0, height: 0 }; }
         matches() {
             return this.hasAttribute("floatingurlbar-active") &&
                 ["focused", "popover-open", "floatingurlbar-hold"].some(a => this.hasAttribute(a));
@@ -86,16 +87,33 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
     document.getElementById = id => elements.get(id);
     document.createXULElement = () => new Element("");
     document.createElementNS = () => new Element("");
+    document.documentElement = new Element("main-window");
     const window = new Element("window");
     window.CSS = { supports: () => anchorSupport };
     const resizeCallbacks = [];
+    const captions = [];
+    elements.get("navigator-toolbox").querySelectorAll = () => captions;
     if (compactControls) {
-        document.documentElement = new Element("main-window");
         for (const id of ["sidebar-container", "nav-bar", "nav-bar-overflow-button", "nav-bar-customization-target", "urlbar-container",
             "back-button", "forward-button", "stop-reload-button", "downloads-button", "fixture-browser-action", "unified-extensions-button"]) {
             elements.set(id, new Element(id));
         }
         elements.get("sidebar-container").clientWidth = 180;
+        if (nativeCaptions) {
+            document.documentElement.setAttribute("customtitlebar");
+            for (const id of ["toolbar-menubar", "TabsToolbar", "nav-bar"]) {
+                const toolbar = elements.get(id) || new Element(id);
+                elements.set(id, toolbar);
+                toolbar.rect = { width: 1000, height: id === "nav-bar" ? 40 : 0 };
+                const caption = new Element(`caption-${id}`);
+                const box = new Element(`caption-box-${id}`);
+                box.rect = { width: 120, height: 32 };
+                caption.querySelector = () => box;
+                caption.parentElement = toolbar;
+                captions.push(caption);
+                elements.set(caption.id, caption);
+            }
+        }
         elements.get("fixture-browser-action").localName = "toolbaritem";
         elements.get("fixture-browser-action").classList = {
             contains: name => name === "unified-extensions-item"
@@ -269,12 +287,20 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
     let now = 100000;
     let timerId = 0;
     const timers = [];
+    const preferenceObservers = new Map();
     vm.runInNewContext(source, {
         document, window, gBrowser: browser, gURLBar, console,
         Services: { prefs: {
             getBoolPref: (name, fallback) => prefs[name] ?? fallback,
-            prefHasUserValue: () => false
-        }, appinfo: { OS: "Linux" } },
+            getStringPref: (name, fallback) => prefs[name] ?? fallback,
+            prefHasUserValue: () => false,
+            addObserver(name, callback) {
+                const callbacks = preferenceObservers.get(name) || new Set();
+                callbacks.add(callback);
+                preferenceObservers.set(name, callbacks);
+            },
+            removeObserver: (name, callback) => preferenceObservers.get(name)?.delete(callback)
+        }, appinfo: { OS: platform } },
         MutationObserver: class {
             constructor(callback) { observers.push(callback); }
             observe() {}
@@ -296,6 +322,11 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
         toolbox: elements.get("navigator-toolbox"),
         widget: id => elements.get(id),
         root: document.documentElement,
+        setPref(name, value) {
+            prefs[name] = value;
+            for (const callback of preferenceObservers.get(name) || []) callback();
+        },
+        preferenceObservers,
         toolbarOrder(ids) {
             elements.get("nav-bar-customization-target").children = ids.map(id => elements.get(id));
             for (const callback of observers) callback();
@@ -344,6 +375,84 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
         }
     };
 }
+
+test("master switch starts with native shortcuts and disables compact interactions", () => {
+    const prefs = { "uc.floatingurlbar.enabled": false, "uc.floatingurlbar.compact": true };
+    const s = setup({ prefs, compactControls: true, nativeCaptions: true, separateSearchBar: "searchbar" });
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    assert.equal(s.nativeShortcutEnabled(), true);
+    assert.equal(s.widget("floatingUrlbarReplaceNewTabKey").getAttribute("disabled"), "true");
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), false);
+    assert.equal(s.widget("back-button").hasAttribute("floatingurlbar-compact-control"), false);
+    assert.equal(s.widget("caption-nav-bar").hasAttribute("floatingurlbar-compact-caption"), false);
+    s.input.focus();
+    s.window.emit("mousedown", { target: s.input, button: 0 });
+    s.toolbox.emit("mousedown", { button: 0 });
+    s.toolbox.emit("mousemove", { buttons: 0, clientX: 20, clientY: 1 });
+    s.window.emit("popupshowing", { target: { anchorNode: s.input } });
+    for (const key of ["l", "k", "F10"]) assert.equal(s.key(key, { ctrlKey: true }).defaultPrevented, undefined);
+    s.advance(1000);
+    for (const attr of ["floatingurlbar-sidebar-editing", "floatingurlbar-controls-open", "floatingurlbar-active"]) {
+        assert.equal(s.bar.hasAttribute(attr), false, attr);
+    }
+    for (const attr of ["floatingurlbar-compact-reveal", "floatingurlbar-compact-press", "floatingurlbar-native-focus"]) {
+        assert.equal(s.toolbox.hasAttribute(attr), false, attr);
+    }
+    assert.equal(s.where({}), "current");
+    s.setPref("uc.floatingurlbar.enabled", true);
+    assert.equal(s.nativeShortcutEnabled(), false);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), true);
+    assert.equal(s.widget("caption-nav-bar").hasAttribute("floatingurlbar-compact-caption"), true);
+    s.ctrlT();
+    assert.equal(s.active(), true);
+    assert.equal(s.where({}), "tab");
+    assert.equal(prefs["uc.floatingurlbar.compact"], true);
+});
+
+test("live disable clears floating and compact state without losing typed text", () => {
+    const s = setup({ prefs: { "uc.floatingurlbar.compact": true }, compactControls: true, nativeCaptions: true });
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    s.ctrlT(); s.type("keep these edits");
+    s.window.emit("popupshowing", { target: { anchorNode: s.input } });
+    s.toolbox.emit("mousedown", { button: 0 });
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-press"), true);
+    s.setPref("uc.floatingurlbar.enabled", false);
+    s.advance(10000);
+    assert.equal(s.input.value, "keep these edits");
+    assert.equal(s.active(), false);
+    assert.equal(s.bar.hasAttribute("floatingurlbar-hold"), false);
+    assert.equal(s.bar.hasAttribute("floatingurlbar-controls-open"), false);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-press"), false);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-reveal"), false);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), false);
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "");
+    assert.equal(s.widget("back-button").style.getPropertyValue("--floatingurlbar-compact-column"), "");
+    assert.equal(s.nativeShortcutEnabled(), true);
+    assert.equal(s.where({}), "current");
+    s.gURLBar.handleNavigation({ event: {} });
+    assert.equal(s.loads.at(-1).options.where, "current");
+    s.setPref("uc.floatingurlbar.enabled", true);
+    assert.equal(s.nativeShortcutEnabled(), false);
+    assert.equal(s.widget("floatingUrlbarReplaceNewTabKey").hasAttribute("disabled"), false);
+    assert.equal(s.active(), false);
+    s.ctrlT();
+    assert.equal(s.where({}), "tab");
+    s.window.emit("unload");
+    assert.equal(s.preferenceObservers.get("uc.floatingurlbar.enabled").size, 0);
+});
+
+test("disabling preserves the destination of an already submitted deferred navigation", () => {
+    for (const deferLookup of [false, true]) {
+        const s = setup();
+        s.ctrlT(); s.type("https://submitted.example");
+        s.gURLBar.handleNavigation({ event: {}, defer: true, deferLookup });
+        s.setPref("uc.floatingurlbar.enabled", false);
+        s.flushNavigation();
+        assert.equal(s.loads.at(-1).options.where, "tab");
+        assert.equal(s.active(), false);
+        assert.equal(s.where({}), "current");
+    }
+});
 
 test("automatic focus, clicks, F6 and Alt+D stay native; shortcuts activate floating", () => {
     const s = setup();
@@ -1467,6 +1576,51 @@ test("compact strip reveals only after a stationary 200ms hover", () => {
     assert.equal(native.toolbox.hasAttribute(attr), false);
 });
 
+test("compact captions use the native active instance and fall back when it cannot fit", () => {
+    const s = setup({ compactControls: true, nativeCaptions: true,
+        prefs: { "uc.floatingurlbar.compact": true } });
+    const attr = "floatingurlbar-compact-caption";
+    const offset = () => s.root.style.getPropertyValue("--floatingurlbar-compact-caption-offset");
+    const nav = s.widget("caption-nav-bar"), menu = s.widget("caption-toolbar-menubar");
+    assert.equal(nav.hasAttribute(attr), true);
+    assert.equal(menu.hasAttribute(attr), false);
+    assert.equal(offset(), "36px");
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "76px");
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    const target = { closest: selector => selector.includes("[floatingurlbar-compact-caption]") ? nav : null };
+    s.toolbox.emit("mousemove", { target, clientX: 10, clientY: 1 });
+    s.advance(200);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-reveal"), false);
+    s.toolbox.emit("mousedown", { target, button: 0 });
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-press"), false);
+    const parent = nav.parentElement;
+    s.resizeSidebar(120);
+    assert.equal(nav.hasAttribute(attr), false);
+    assert.equal(offset(), "0px");
+    s.resizeSidebar(250);
+    assert.equal(nav.hasAttribute(attr), true);
+    // A visible menubar owns native caption controls until it closes again.
+    s.widget("toolbar-menubar").rect.height = 32;
+    s.resizeSidebar(250);
+    assert.equal(menu.hasAttribute(attr), true);
+    assert.equal(nav.hasAttribute(attr), false);
+    s.widget("toolbar-menubar").rect.height = 0;
+    s.resizeSidebar(250);
+    assert.equal(nav.hasAttribute(attr), true);
+    assert.equal(nav.parentElement, parent);
+    s.root.removeAttribute("customtitlebar");
+    s.resizeSidebar(250);
+    assert.equal(nav.hasAttribute(attr), false);
+    s.root.setAttribute("customtitlebar");
+    s.resizeSidebar(250);
+    s.window.emit("unload");
+    assert.equal(nav.hasAttribute(attr), false);
+    assert.equal(offset(), "");
+    const mac = setup({ compactControls: true, nativeCaptions: true, platform: "Darwin" });
+    assert.equal(mac.widget("caption-nav-bar").hasAttribute(attr), false);
+    assert.equal(mac.root.style.getPropertyValue("--floatingurlbar-compact-caption-offset"), "0px");
+});
+
 test("compact hover uses the CSS strip height in restored and scaled layouts", () => {
     for (const height of [3, 12]) {
         const s = setup({ compactControls: true, revealStripHeight: `${height}px`,
@@ -1696,6 +1850,29 @@ test("compact click expansion stays separate from automatic focus and keyboard f
     assert.equal(s.bar.hasAttribute(attr), false);
 });
 
+test("hover preference keeps native editing and floating shortcuts even when pinned open", () => {
+    for (const hovering of [true, false]) {
+        const prefs = { "uc.floatingurlbar.compact": true, "sidebar.visibility": "expand-on-hover" };
+        const s = setup({ compactControls: true, prefs });
+        if (hovering) s.root.setAttribute("sidebar-expand-on-hover");
+        s.input.focus();
+        s.window.emit("mousedown", { target: s.input, button: 0 });
+        assert.equal(s.bar.hasAttribute("floatingurlbar-sidebar-editing"), false);
+        for (const key of ["t", "l", "k"]) {
+            if (key === "t") s.ctrlT();
+            else s.key(key, { ctrlKey: true }, () => s.input.focus());
+            assert.equal(s.active(), true);
+            assert.equal(s.where({}), key === "t" ? "tab" : "current");
+            s.key("Escape");
+            assert.equal(s.active(), false);
+        }
+        prefs["sidebar.visibility"] = "always-show";
+        s.root.removeAttribute("sidebar-expand-on-hover");
+        s.window.emit("mousedown", { target: s.input, button: 0 });
+        assert.equal(s.bar.hasAttribute("floatingurlbar-sidebar-editing"), true);
+    }
+});
+
 test("sidebar click expansion clears on Escape and tab changes and requires opt-in", () => {
     const attr = "floatingurlbar-sidebar-editing";
     const s = setup({ prefs: { "uc.floatingurlbar.compact": true } });
@@ -1760,7 +1937,7 @@ test("empty compact sidebar clicks dismiss ordinary editing and all floating flo
 });
 
 test("sidebar dismissal leaves controls, popup interactions and native layouts alone", () => {
-    for (const kind of ["right-click", "handled", "control", "shadow-control", "menu", "collapsed", "horizontal", "fullscreen", "customizing", "disabled"]) {
+    for (const kind of ["right-click", "handled", "control", "shadow-control", "menu", "collapsed", "horizontal", "fullscreen", "customizing", "hover-expanded", "hover-pinned", "disabled"]) {
         const prefs = { "uc.floatingurlbar.compact": true };
         const s = setup({ compactControls: true, prefs });
         const sidebar = s.widget("sidebar-container");
@@ -1778,6 +1955,8 @@ test("sidebar dismissal leaves controls, popup interactions and native layouts a
         if (kind === "horizontal") s.browser.tabContainer.setAttribute("orient", "horizontal");
         if (kind === "fullscreen") s.root.setAttribute("sizemode", "fullscreen");
         if (kind === "customizing") s.root.setAttribute("customizing");
+        if (kind === "hover-expanded" || kind === "hover-pinned") prefs["sidebar.visibility"] = "expand-on-hover";
+        if (kind === "hover-expanded") s.root.setAttribute("sidebar-expand-on-hover");
         if (kind === "disabled") prefs["uc.floatingurlbar.compact"] = false;
         s.window.emit("click", event);
         assert.equal(s.bar.hasAttribute("focused"), true, kind);

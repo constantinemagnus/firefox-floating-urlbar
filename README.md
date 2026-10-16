@@ -143,13 +143,15 @@ Create these preferences as **Boolean** values in `about:config` to override the
 
 | Preference | Default | Meaning |
 | --- | --- | --- |
-| `uc.floatingurlbar.enabled` | `true` | Set to `false` to restore native shortcut behavior; appearance preferences remain independent |
+| `uc.floatingurlbar.enabled` | `true` | Master switch: set to `false` to disable all features and restore native Firefox shortcuts and appearance immediately |
 | `uc.floatingurlbar.debug` | `false` | Log script activity to the Browser Console (Ctrl+Shift+J) |
 | `uc.floatingurlbar.animate` | `false` | CSS-only: enable the 0.3-second position/width animation |
 | `uc.floatingurlbar.dim` | `true` | CSS-only: dim the background by 35% while the bar floats |
 | `uc.floatingurlbar.glass` | `false` | Experimental, CSS-only: translucent floating input, suggestions, and engine shortcuts with background blur |
 | `uc.floatingurlbar.compact` | `false` | Experimental: compact toolbar above expanded vertical tabs |
 | `uc.floatingurlbar.compact.pins.manual` | `false` | Use Firefox's native pinned-tab height and resize handle instead of fitting rows automatically in compact mode |
+
+To test Firefox without this customization, set `uc.floatingurlbar.enabled` to `false`; no uninstall or restart is needed. Set it back to `true` to re-enable your saved settings.
 
 The system's reduced-motion preference always disables animation. The optional animation is best suited to the normal toolbar layout.
 
@@ -173,7 +175,7 @@ Set `uc.floatingurlbar.glass` to `true` in `about:config` for the translucent ap
 
 ## Compact mode
 
-Set `uc.floatingurlbar.compact` to `true` to put the address field and menu above expanded vertical tabs on either side. Collapsed sidebars, horizontal tabs, fullscreen and toolbar customization use the normal layout.
+Set `uc.floatingurlbar.compact` to `true` to put the address field and menu above expanded vertical tabs on either side. Collapsed sidebars, horizontal tabs, fullscreen and toolbar customization use the normal layout. Expand-on-hover always uses the normal layout, even when pinned open; turn it off to use compact mode. Floating shortcuts still work.
 
 Pinned extensions appear in the compact header automatically. In **Customize Toolbar**, move other buttons before the address field to show them there too. Remaining buttons stay in the toolbar revealed by hovering near the top edge. The native **Extensions** button defaults to the left, beside the menu, unless hidden in Firefox's settings; moving it before the address field sets its header order. Unpinned extensions remain available in its panel. The overflow button is hidden.
 
@@ -183,7 +185,9 @@ Use the centered bar to change search engines or access site information and per
 
 Pinned tabs resize automatically, scrolling at 40% of the window height. Set `uc.floatingurlbar.compact.pins.manual` to `true` to use Firefox's saved height and resize handle instead.
 
-Hold the pointer still near the top edge for a moment to reveal the remaining toolbar and window controls. The hover area extends farther down in restored windows to clear the resize edge. Drag empty space in the revealed toolbar, compact header or vertical tab area to move the window. On Windows and Linux, a right-hand sidebar moves window controls to the left; macOS keeps native placement.
+Hold the pointer still near the top edge for a moment to reveal the remaining toolbar. The hover area extends farther down in restored windows to make it easier to reach. Drag empty space in the revealed toolbar, compact header or vertical tab area to move the window.
+
+On Windows and Linux, native window controls occupy their own row above the compact header when they fit, with close at the sidebar's outer edge. Narrow sidebars keep them in the hover toolbar; a right-hand sidebar puts these fallback controls on the left to keep the header clear. Placement follows the sidebar automatically. macOS keeps native placement.
 
 ## Other URL bar tweaks
 

@@ -29,6 +29,12 @@
  * See ATTRIBUTION.md for additional attribution information.
  */
 
+/* Keep our injected button hidden when the master switch is off. */
+#floatingurlbar-sidebar-placeholder {
+    display: none;
+}
+
+@media not -moz-pref("uc.floatingurlbar.enabled", false) {
 @supports (anchor-name: --a) {
 
     :root {
@@ -59,10 +65,6 @@
         min(var(--urlbar-background-border-radius), var(--floatingurlbar-height) / 2) +
         var(--urlbar-background-overhang-open, 8px)
     );
-    }
-
-    #floatingurlbar-sidebar-placeholder {
-        display: none;
     }
 
     /* Keep the input out of toolbar layout in both states. Returning an
@@ -255,9 +257,9 @@
     /* Compact vertical-tab header. The original toolbar/URL-bar DOM stays
      * intact: native click editing expands beside the sidebar, while explicit
      * floating shortcuts keep their existing viewport-centered geometry.
-     * Horizontal tabs, collapsed sidebars and fullscreen retain native layout. */
+     * Horizontal tabs, hover expansion, collapsed sidebars and fullscreen retain native layout. */
     @supports (position-visibility: always) {
-        @media -moz-pref("uc.floatingurlbar.compact") {
+        @media -moz-pref("uc.floatingurlbar.compact") and (not -moz-pref("sidebar.visibility", "expand-on-hover")) {
             :root:has(
                 #navigator-toolbox[floatingurlbar-compact-ready]
             ):not([customizing], [sizemode="fullscreen"], [inDOMFullscreen]):has(
@@ -287,15 +289,47 @@
                 [floatingurlbar-compact-control], #PanelUI-menu-button {
                     -moz-window-dragging: no-drag !important;
                 }
-                /* As in FlexFox, use toolbar order to keep native controls
-                 * clear of a right-side header. macOS keeps native placement. */
+                /* Keep close at the sidebar's outer edge; macOS keeps native placement. */
                 @media (-moz-platform: windows) or (-moz-platform: linux) {
-                    &:has(#sidebar-container[sidebar-positionend]) {
-                        #navigator-toolbox .titlebar-buttonbox-container {
-                            order: -1 !important;
-                        }
-                        #navigator-toolbox .titlebar-buttonbox {
+                    #navigator-toolbox [floatingurlbar-compact-caption] {
+                        position: fixed !important;
+                        position-anchor: --floatingurlbar-sidebar;
+                        top: calc(anchor(top) + 4px) !important;
+                        left: calc(anchor(left) + 8px) !important;
+                        margin: 0 !important;
+                        visibility: visible;
+                        position-visibility: always;
+                        .titlebar-buttonbox {
+                            min-height: 32px;
+                            direction: ltr;
                             flex-direction: row-reverse !important;
+                        }
+                        .titlebar-min {
+                            order: 0 !important;
+                        }
+                        :is(.titlebar-max, .titlebar-restore) {
+                            order: 1 !important;
+                        }
+                        .titlebar-close {
+                            order: 2 !important;
+                        }
+                    }
+                    &:has(#sidebar-container[sidebar-positionend]) {
+                        #navigator-toolbox [floatingurlbar-compact-caption] {
+                            left: auto !important;
+                            right: calc(anchor(right) + 8px) !important;
+                            .titlebar-buttonbox {
+                                flex-direction: row !important;
+                            }
+                        }
+                        /* The narrow fallback must stay clear of the permanent header. */
+                        &:not(:has([floatingurlbar-compact-caption])) {
+                            #navigator-toolbox .titlebar-buttonbox-container {
+                                order: -1 !important;
+                            }
+                            #navigator-toolbox .titlebar-buttonbox {
+                                flex-direction: row-reverse !important;
+                            }
                         }
                     }
                 }
@@ -341,14 +375,14 @@
                     visibility: visible;
                     pointer-events: auto;
                 }
-                /* Restored windows need a reachable strip below the native resize edge. */
+                /* A restored window has no screen-edge stop to help reach a narrow strip. */
                 &[sizemode="normal"] #navigator-toolbox[floatingurlbar-compact-ready]::before {
                     height: 12px;
                 }
                 /* The strip arms only after JS times a stationary hover, so
                  * brushing the edge cannot arm it; a press still opens at once. */
                 #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-reveal]:hover:not(:has(
-                    :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button):hover
+                    :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button, [floatingurlbar-compact-caption]):hover
                 )) {
                     visibility: visible;
                     transition: none !important;
@@ -386,7 +420,7 @@
                  * exclusion: hovering the permanent header must not expose the
                  * hidden strip's drag region. */
                 #navigator-toolbox[floatingurlbar-compact-ready]:hover:not(:has(
-                    :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button):hover
+                    :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button, [floatingurlbar-compact-caption]):hover
                 )) :is(#urlbar-container, #urlbar) {
                     -moz-window-dragging: drag !important;
                 }
@@ -470,7 +504,7 @@
                 :is([floatingurlbar-compact-control], #PanelUI-menu-button) {
                     position: fixed !important;
                     position-anchor: --floatingurlbar-sidebar;
-                    top: calc(anchor(top) + 4px + var(--floatingurlbar-compact-row, 0) * 36px) !important;
+                    top: calc(anchor(top) + var(--floatingurlbar-compact-caption-offset, 0px) + 4px + var(--floatingurlbar-compact-row, 0) * 36px) !important;
                     left: calc(anchor(left) + 8px + var(--floatingurlbar-compact-column, 0) * 36px) !important;
                     width: 32px !important;
                     height: 32px !important;
@@ -585,4 +619,5 @@
             animation: none !important;
         }
     }
+}
 }

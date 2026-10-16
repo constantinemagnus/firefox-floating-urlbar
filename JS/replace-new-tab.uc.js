@@ -72,7 +72,7 @@
  const END_DELAY_MS = 400;
 
  const log = (...args) => {
-     if (Services.prefs.getBoolPref(PREF_DEBUG, false)) {
+     if (Services.prefs.getBoolPref(PREF_ENABLED, true) && Services.prefs.getBoolPref(PREF_DEBUG, false)) {
          console.log("[Replace New Tab]", ...args);
      }
  };
@@ -284,6 +284,10 @@
          const canRemember = event && typeof event === "object";
          const previous = navigationContext;
          const navigation = canRemember && navigationEvents.get(event);
+         // Already submitted navigations keep their destination across a toggle.
+         if (!isEnabled() && !navigation && !previous) {
+             return original.apply(this, args);
+         }
          const context = navigation?.context || previous || captureNavigationContext();
          if (canRemember && !navigation) {
              navigationEvents.set(event, { context });
@@ -510,9 +514,24 @@
  key.setAttribute("modifiers", "accel");
  keySet.appendChild(key);
 
- // Disable Firefox's native new-tab shortcut. The + button and File > New Tab
- // keep working and open a normal blank tab.
- nativeNewTabKey.setAttribute("disabled", "true");
+ const nativeKeyDisabled = nativeNewTabKey.getAttribute("disabled");
+ const syncEnabled = () => {
+     if (isEnabled()) {
+         key.removeAttribute("disabled");
+         nativeNewTabKey.setAttribute("disabled", "true");
+     } else {
+         key.setAttribute("disabled", "true");
+         if (nativeKeyDisabled === null) nativeNewTabKey.removeAttribute("disabled");
+         else nativeNewTabKey.setAttribute("disabled", nativeKeyDisabled);
+         // Preserve typed text; disabling changes presentation and future input.
+         endFlow();
+         pendingPopups.clear();
+         urlbarPopups.clear();
+         urlbar.removeAttribute(CONTROLS_OPEN_ATTR);
+     }
+ };
+ Services.prefs.addObserver(PREF_ENABLED, syncEnabled);
+ syncEnabled();
 
  // Let Firefox handle Ctrl/Cmd+L and URL-bar Ctrl/Cmd+K normally; only opt into
  // floating. Compact Ctrl+K bypasses a separate search bar; other layouts keep
@@ -653,6 +672,7 @@
  // A newer mouse click, key press or menu dismissal clears it, preventing an
  // unrelated popup from inheriting a previous click's floating state.
  window.addEventListener("mousedown", event => {
+     if (!isEnabled()) return;
      const inBar = urlbar.contains(event.target);
      centeredAtMouseDown = inBar && urlbar.matches(CENTERED_SELECTOR);
      // Returning to the normal toolbar is native editing, even if a previous
@@ -667,7 +687,8 @@
          const inField = event.target === urlbarInput ||
              event.target === gURLBar._inputContainer || event.target === urlbarInput.parentElement;
          if (event.button === 0 && inField && !centeredAtMouseDown &&
-             Services.prefs.getBoolPref(PREF_COMPACT, false)) {
+             Services.prefs.getBoolPref(PREF_COMPACT, false) &&
+             Services.prefs.getStringPref("sidebar.visibility", "") !== "expand-on-hover") {
              urlbar.setAttribute(SIDEBAR_EDIT_ATTR, "");
          }
      }
@@ -676,8 +697,9 @@
  // Empty sidebar backgrounds do not necessarily move native focus. Dismiss
  // after the click so tabs, sidebar controls and their menus act first.
  window.addEventListener("click", event => {
-     if (event.button !== 0 || event.defaultPrevented || urlbarPopups.size !== 0 ||
+     if (!isEnabled() || event.button !== 0 || event.defaultPrevented || urlbarPopups.size !== 0 ||
          !Services.prefs.getBoolPref(PREF_COMPACT, false) ||
+         Services.prefs.getStringPref("sidebar.visibility", "") === "expand-on-hover" ||
          !(urlbar.hasAttribute(SIDEBAR_EDIT_ATTR) || urlbar.hasAttribute(ACTIVE_ATTR)) ||
          document.activeElement !== urlbarInput) {
          return;
@@ -735,6 +757,7 @@
  }, true);
 
  window.addEventListener("popupshowing", event => {
+     if (!isEnabled()) return;
      log(
          "popupshowing", event.target?.id || event.target?.localName,
          "| anchor:", event.target?.anchorNode?.id,
@@ -775,7 +798,7 @@
  }, true);
 
  window.addEventListener("popupshown", event => {
-     if (belongsToUrlbar(event.target)) {
+     if (isEnabled() && belongsToUrlbar(event.target)) {
          pendingPopups.delete(event.target);
          urlbarPopups.add(event.target);
          urlbar.setAttribute(CONTROLS_OPEN_ATTR, "");
@@ -822,6 +845,7 @@
  }, true);
 
  window.addEventListener("unload", () => {
+     Services.prefs.removeObserver(PREF_ENABLED, syncEnabled);
      endFlow();
      urlbar.removeAttribute(CONTROLS_OPEN_ATTR);
      observer.disconnect();
@@ -834,7 +858,7 @@
      window.CSS.supports("position-visibility: always")) {
      const nativeFocusAttr = "floatingurlbar-native-focus";
      const onToolbarKey = event => {
-         if (Services.prefs.getBoolPref(PREF_COMPACT, false) &&
+         if (isEnabled() && Services.prefs.getBoolPref(PREF_COMPACT, false) &&
              (event.key === "F10" || (event.key === "Alt" && !event.ctrlKey && !event.metaKey))) {
              toolbox.setAttribute(nativeFocusAttr, "");
              setTimeout(() => toolbox.removeAttribute(nativeFocusAttr), 0);
@@ -865,6 +889,9 @@
          const rowProp = "--floatingurlbar-compact-row";
          const inputTopProp = "--floatingurlbar-compact-input-top";
          const headerHeightProp = "--floatingurlbar-compact-header-height";
+         const captionAttr = "floatingurlbar-compact-caption";
+         const captionOffsetProp = "--floatingurlbar-compact-caption-offset";
+         const captions = [...toolbox.querySelectorAll(".titlebar-buttonbox-container")];
          let controls = new Set();
          const setProperty = (node, name, value) => {
              if (node.style.getPropertyValue(name) !== value) {
@@ -876,7 +903,23 @@
              node.style.removeProperty(columnProp);
              node.style.removeProperty(rowProp);
          };
+         const clearControls = () => {
+             for (const node of controls) releaseControl(node);
+             controls.clear();
+             document.documentElement.style.removeProperty(inputTopProp);
+             document.documentElement.style.removeProperty(headerHeightProp);
+             document.documentElement.style.removeProperty(captionOffsetProp);
+             for (const node of captions) node.removeAttribute(captionAttr);
+             toolbox.removeAttribute(compactReadyAttr);
+         };
          const syncControls = () => {
+             if (!isEnabled()) {
+                 forgetReveal();
+                 releaseToolboxPress();
+                 toolbox.removeAttribute(nativeFocusAttr);
+                 clearControls();
+                 return;
+             }
              if (!compactLayoutActive()) {
                  forgetReveal();
              }
@@ -910,6 +953,24 @@
                      releaseControl(node);
                  }
              }
+             // Keep the native instance; narrow sidebars use the toolbar.
+             let caption = null;
+             if ((Services.appinfo.OS === "Linux" || Services.appinfo.OS === "WINNT") &&
+                 document.documentElement.hasAttribute("customtitlebar")) {
+                 caption = captions.find(node => window.getComputedStyle(node).display !== "none" &&
+                     node.parentElement.getBoundingClientRect().height > 0);
+                 const width = caption?.querySelector(".titlebar-buttonbox").getBoundingClientRect().width;
+                 if (!(width > 0 && width + 16 <= sidebar.clientWidth)) {
+                     caption = null;
+                 }
+             }
+             for (const node of captions) {
+                 if (node === caption) node.setAttribute(captionAttr, "");
+                 else node.removeAttribute(captionAttr);
+             }
+             const captionOffset = caption ? Math.max(36,
+                 Math.ceil(caption.querySelector(".titlebar-buttonbox").getBoundingClientRect().height) + 4) : 0;
+             setProperty(document.documentElement, captionOffsetProp, `${captionOffset}px`);
              const columns = Math.max(1, Math.floor((sidebar.clientWidth - 12) / 36));
              let index = 1; // The permanent menu button occupies the first slot.
              for (const node of next) {
@@ -918,22 +979,33 @@
                  setProperty(node, rowProp, String(Math.floor(index / columns)));
                  index++;
              }
-             const inputTop = 4 + Math.ceil(index / columns) * 36;
+             const inputTop = 4 + captionOffset + Math.ceil(index / columns) * 36;
              setProperty(document.documentElement, inputTopProp, `${inputTop}px`);
              setProperty(document.documentElement, headerHeightProp, `${inputTop + 40}px`);
              controls = next;
+             toolbox.setAttribute(compactReadyAttr, "");
          };
          const widgetsObserver = new MutationObserver(syncControls);
          widgetsObserver.observe(target, {
              childList: true, subtree: true, attributes: true,
              attributeFilter: ["hidden", "collapsed", "placeholder"]
          });
+         widgetsObserver.observe(toolbox, {
+             attributes: true, subtree: true,
+             attributeFilter: ["inactive", "autohide", "tabs-hidden"]
+         });
+         widgetsObserver.observe(document.documentElement, {
+             attributes: true, attributeFilter: ["customtitlebar", "sizemode", "customizing", "inDOMFullscreen"]
+         });
          const sidebarObserver = new window.ResizeObserver(syncControls);
          sidebarObserver.observe(sidebar);
+         for (const node of captions) {
+             sidebarObserver.observe(node.querySelector(".titlebar-buttonbox"));
+         }
          // Native window dragging makes Firefox report a spurious pointer
          // leave, so pin the revealed toolbar from press until release.
          const pressAttr = "floatingurlbar-compact-press";
-         const pressIgnore = `#urlbar, [${controlAttr}], #PanelUI-menu-button`;
+         const pressIgnore = `#urlbar, [${controlAttr}], #PanelUI-menu-button, [${captionAttr}]`;
          // A missed mouseup (released outside the window) would strand the
          // hold, so also drop it on the first movement with no button down.
          const onPressMove = event => {
@@ -957,7 +1029,7 @@
          const onToolboxPress = event => {
              stopDwell();
              if (event.button !== 0 ||
-                 !Services.prefs.getBoolPref(PREF_COMPACT, false) ||
+                 !compactEnabled() ||
                  event.target?.closest?.(pressIgnore)) {
                  return;
              }
@@ -980,7 +1052,7 @@
          let forgetTimer = 0;
          let dwellX = null;
          let dwellY = null;
-         const compactEnabled = () => Services.prefs.getBoolPref(PREF_COMPACT, false);
+         const compactEnabled = () => isEnabled() && Services.prefs.getBoolPref(PREF_COMPACT, false);
          // The compact CSS anchors the sidebar only while its layout shows.
          const compactLayoutActive = () =>
              compactEnabled() &&
@@ -1061,26 +1133,22 @@
              }
          };
          syncControls();
-         toolbox.setAttribute(compactReadyAttr, "");
+         Services.prefs.addObserver(PREF_ENABLED, syncControls);
          toolbox.addEventListener("mousemove", onRevealMove, true);
          toolbox.addEventListener("mouseleave", onRevealLeave, true);
          window.addEventListener("blur", onRevealBlur, true);
          window.addEventListener("unload", () => {
+             Services.prefs.removeObserver(PREF_ENABLED, syncControls);
              widgetsObserver.disconnect();
              sidebarObserver.disconnect();
              placeholder.remove();
-             for (const node of controls) {
-                 releaseControl(node);
-             }
-             document.documentElement.style.removeProperty(inputTopProp);
-             document.documentElement.style.removeProperty(headerHeightProp);
+             clearControls();
              toolbox.removeEventListener("mousedown", onToolboxPress, true);
              toolbox.removeEventListener("mousemove", onRevealMove, true);
              toolbox.removeEventListener("mouseleave", onRevealLeave, true);
              window.removeEventListener("blur", onRevealBlur, true);
              releaseToolboxPress();
              forgetReveal();
-             toolbox.removeAttribute(compactReadyAttr);
          }, { once: true });
      }
 
