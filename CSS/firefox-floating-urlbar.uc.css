@@ -265,8 +265,27 @@
             ) {
                 #sidebar-container {
                     anchor-name: --floatingurlbar-sidebar;
+                    position: relative;
                     box-sizing: border-box;
                     padding-block-start: var(--floatingurlbar-compact-header-height, 80px);
+                }
+                /* Limit dragging to chrome gaps, clear of the sidebar's shadow tools. */
+                #sidebar-container::after {
+                    content: "";
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    height: var(--floatingurlbar-compact-header-height, 80px);
+                    pointer-events: none;
+                    -moz-window-dragging: drag;
+                }
+                #vertical-tabs {
+                    -moz-window-dragging: drag;
+                }
+                #vertical-tabs :is(tab, tab-group, toolbarbutton, button, input, splitter, scrollbar),
+                [floatingurlbar-compact-control], #PanelUI-menu-button {
+                    -moz-window-dragging: no-drag !important;
                 }
                 /* As in FlexFox, use toolbar order to keep native controls
                  * clear of a right-side header. macOS keeps native placement. */
@@ -310,6 +329,7 @@
                     transform: none !important;
                     opacity: 1 !important;
                     transition: visibility 0s 300ms !important;
+                    -moz-window-dragging: drag;
                 }
                 #navigator-toolbox[floatingurlbar-compact-ready]::before {
                     content: "";
@@ -320,6 +340,10 @@
                     height: 3px;
                     visibility: visible;
                     pointer-events: auto;
+                }
+                /* Restored windows need a reachable strip below the native resize edge. */
+                &[sizemode="normal"] #navigator-toolbox[floatingurlbar-compact-ready]::before {
+                    height: 12px;
                 }
                 /* The strip arms only after JS times a stationary hover, so
                  * brushing the edge cannot arm it; a press still opens at once. */

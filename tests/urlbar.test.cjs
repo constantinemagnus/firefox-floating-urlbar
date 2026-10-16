@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, "../JS/replace-new-tab.uc.js
 
 function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missingCommitAPI = false,
     fallbackResult = Promise.resolve({}), configureUrlbar, prefs = {}, anchorSupport = true, compactControls = false,
-    separateSearchBar = null } = {}) {
+    separateSearchBar = null, revealStripHeight = "3px" } = {}) {
     class Element {
         constructor(id) {
             this.id = id;
@@ -103,7 +103,8 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
         elements.get("nav-bar-customization-target").children =
             ["back-button", "forward-button", "stop-reload-button", "urlbar-container", "downloads-button"]
                 .map(id => elements.get(id));
-        window.getComputedStyle = node => {
+        window.getComputedStyle = (node, pseudo) => {
+            if (pseudo === "::before") return { height: revealStripHeight };
             const navbar = elements.get("nav-bar");
             const unavailableOverflow = node.id === "nav-bar-overflow-button" &&
                 !navbar.hasAttribute("overflowing") && !navbar.hasAttribute("nonemptyoverflow");
@@ -1464,6 +1465,25 @@ test("compact strip reveals only after a stationary 200ms hover", () => {
     native.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
     native.advance(1000);
     assert.equal(native.toolbox.hasAttribute(attr), false);
+});
+
+test("compact hover uses the CSS strip height in restored and scaled layouts", () => {
+    for (const height of [3, 12]) {
+        const s = setup({ compactControls: true, revealStripHeight: `${height}px`,
+            prefs: { "uc.floatingurlbar.compact": true } });
+        const attr = "floatingurlbar-compact-reveal";
+        s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+        // Both values are CSS pixels; monitor scaling must not be applied again.
+        s.toolbox.emit("mousemove", { clientX: 500, clientY: height - 0.5 });
+        s.advance(199);
+        assert.equal(s.toolbox.hasAttribute(attr), false);
+        s.advance(1);
+        assert.equal(s.toolbox.hasAttribute(attr), true);
+        s.window.emit("blur", { target: s.window });
+        s.toolbox.emit("mousemove", { clientX: 500, clientY: height });
+        s.advance(300);
+        assert.equal(s.toolbox.hasAttribute(attr), false);
+    }
 });
 
 test("compact layout changes clear reveal and pending dwell without pointer movement", () => {

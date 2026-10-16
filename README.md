@@ -183,7 +183,7 @@ Use the centered bar to change search engines or access site information and per
 
 Pinned tabs resize automatically, scrolling at 40% of the window height. Set `uc.floatingurlbar.compact.pins.manual` to `true` to use Firefox's saved height and resize handle instead.
 
-Hold the pointer still near the top edge for a moment to reveal the remaining toolbar and window controls. On Windows and Linux, a right-hand sidebar moves window controls to the left; macOS keeps native placement.
+Hold the pointer still near the top edge for a moment to reveal the remaining toolbar and window controls. The hover area extends farther down in restored windows to clear the resize edge. Drag empty space in the revealed toolbar, compact header or vertical tab area to move the window. On Windows and Linux, a right-hand sidebar moves window controls to the left; macOS keeps native placement.
 
 ## Other URL bar tweaks
 
