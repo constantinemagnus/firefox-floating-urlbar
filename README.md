@@ -38,7 +38,7 @@ By default, the bar opens and closes without animation and dims the background b
 
 - Firefox. The installers set up [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) when needed, or reuse an existing loader.
 - CSS anchor positioning support. Without it, the stylesheet has no effect and the bar stays in its normal position.
-- Tested on Firefox 157.0.1 on Linux; Windows local install verified. Windows remote install/uninstall and macOS are untested.
+- Firefox UI tested on Firefox 157.0.1 on Linux. Installer regressions run on Windows and macOS (Intel and Apple Silicon); GUI behavior and elevation prompts on those platforms still need manual testing.
 - The script uses Firefox's internal URL bar APIs. If required APIs are missing, it logs a warning in the Browser Console and preserves normal Ctrl+T behavior.
 
 > These files run with full browser privileges. Read them before installing.
@@ -67,7 +67,7 @@ Options: `--profile /path/to/profile`, `--root DIR`, `--firefox-dir /path/to/fir
 
 ### Windows
 
-Local install verified; remote install/uninstall untested.
+Local install verified; remote network installation and UAC prompts still need manual testing.
 
 One-command:
 
