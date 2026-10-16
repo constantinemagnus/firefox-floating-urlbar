@@ -265,19 +265,19 @@ try {
         $ProfilePath = $target
         Invoke-FloatingUrlbarInstall
         Assert-That (-not (Test-Path "$target/chrome/JS/replace-new-tab.uc.js")) 'empty record blocked uninstall'
-        Assert-That ((Test-Path -LiteralPath $state -PathType Leaf) -and ([string](Get-Content -LiteralPath $state -Raw)).Trim() -eq '') 'uninstall dropped an empty record'
+        Assert-That ((Test-Path -LiteralPath $state -PathType Leaf) -and ("$(Get-Content -LiteralPath $state -Raw)".Trim() -eq '')) 'uninstall dropped an empty record'
     }
 
     # compatibility.ini LastPlatformDir locates Firefox without an explicit directory.
     & {
         $platformProfile = Join-Path $temp 'platform profile'
         [IO.Directory]::CreateDirectory($platformProfile) | Out-Null
-        Set-Content (Join-Path $platformProfile 'prefs.js') 'fixture'
-        Set-Content (Join-Path $platformProfile 'compatibility.ini') "[Compatibility]`nLastPlatformDir=$FirefoxDirectory"
+        Set-Content -LiteralPath (Join-Path $platformProfile 'prefs.js') 'fixture'
+        Set-Content -LiteralPath (Join-Path $platformProfile 'compatibility.ini') "[Compatibility]`nLastPlatformDir=$FirefoxDirectory"
         Assert-That ((Find-FirefoxDirectory $platformProfile '') -eq $FirefoxDirectory) 'compatibility LastPlatformDir was ignored'
         $explicitFirefox = Join-Path $temp 'explicit Firefox'
         [IO.Directory]::CreateDirectory($explicitFirefox) | Out-Null
-        Set-Content (Join-Path $explicitFirefox 'firefox.exe') 'fixture executable'
+        Set-Content -LiteralPath (Join-Path $explicitFirefox 'firefox.exe') 'fixture executable'
         Assert-That ((Find-FirefoxDirectory $platformProfile $explicitFirefox) -eq $explicitFirefox) 'explicit Firefox directory did not win'
     }
 
@@ -286,10 +286,10 @@ try {
         $weirdRoot = Join-Path $temp 'weird names root'
         $bracketed = Join-Path $weirdRoot 'sub [brackets]'
         [IO.Directory]::CreateDirectory($bracketed) | Out-Null
-        Set-Content (Join-Path $bracketed 'prefs.js') 'fixture'
+        Set-Content -LiteralPath (Join-Path $bracketed 'prefs.js') 'fixture'
         $weirdPlain = Join-Path $weirdRoot 'plain profile'
         [IO.Directory]::CreateDirectory($weirdPlain) | Out-Null
-        Set-Content (Join-Path $weirdPlain 'prefs.js') 'fixture'
+        Set-Content -LiteralPath (Join-Path $weirdPlain 'prefs.js') 'fixture'
         [IO.File]::WriteAllText((Join-Path $weirdRoot 'profiles.ini'), "[Profile0]`nName=Brackets`nIsRelative=1`nPath=sub [brackets]`n[Profile1]`nName=Plain`nIsRelative=1`nPath=plain profile`n")
         $weirdRows = @(Get-FirefoxProfiles $weirdRoot)
         Assert-That ($weirdRows.Count -eq 2) 'bracketed INI path was not discovered literally'
@@ -308,7 +308,7 @@ try {
         $unicodeOther = Join-Path $unicodeRoot 'other profile'
         foreach ($dir in @($unicodeProfile, $unicodeOther)) {
             [IO.Directory]::CreateDirectory($dir) | Out-Null
-            Set-Content (Join-Path $dir 'prefs.js') 'fixture'
+            Set-Content -LiteralPath (Join-Path $dir 'prefs.js') 'fixture'
         }
         Assert-That (@(Get-FirefoxProfiles $unicodeRoot).Count -eq 2) 'Unicode folder fallback missed a profile'
         function Write-Host([string]$Object) { $script:unicodeRows++ }
@@ -330,15 +330,15 @@ try {
             function Read-Host([string]$Prompt) { throw 'unexpected profile prompt' }
             $jProfile = Join-Path $temp 'junction profile'
             [IO.Directory]::CreateDirectory($jProfile) | Out-Null
-            Set-Content (Join-Path $jProfile 'prefs.js') 'preserve preferences'
+            Set-Content -LiteralPath (Join-Path $jProfile 'prefs.js') 'preserve preferences'
             $jOutside = Join-Path $temp 'junction outside'
             [IO.Directory]::CreateDirectory($jOutside) | Out-Null
-            Set-Content (Join-Path $jOutside 'marker.txt') 'must survive'
+            Set-Content -LiteralPath (Join-Path $jOutside 'marker.txt') 'must survive'
             New-Item -ItemType Junction -Path (Join-Path $jProfile 'chrome') -Target $jOutside | Out-Null
             Assert-Rejected { Assert-Destination (Join-Path $jProfile 'chrome') -Directory } 'junctioned directory was accepted'
             $ProfilePath = $jProfile
             Assert-Rejected { Invoke-FloatingUrlbarInstall } 'install into a junctioned chrome directory was accepted'
-            Assert-That ((Get-Content (Join-Path $jOutside 'marker.txt')) -eq 'must survive') 'junction target was modified'
+            Assert-That ((Get-Content -LiteralPath (Join-Path $jOutside 'marker.txt')) -eq 'must survive') 'junction target was modified'
             Assert-That (-not (Test-Path (Join-Path (Join-Path $jOutside 'JS') 'replace-new-tab.uc.js'))) 'payload was written through the junction'
         }
     }
@@ -348,7 +348,7 @@ try {
         $iniRoot = Join-Path $temp 'empty ini root'
         $iniProfile = Join-Path $iniRoot 'lonely profile'
         [IO.Directory]::CreateDirectory($iniProfile) | Out-Null
-        Set-Content (Join-Path $iniProfile 'prefs.js') 'fixture'
+        Set-Content -LiteralPath (Join-Path $iniProfile 'prefs.js') 'fixture'
         [IO.File]::WriteAllText((Join-Path $iniRoot 'profiles.ini'), '')
         $iniFound = @(Get-FirefoxProfiles $iniRoot)
         Assert-That ($iniFound.Count -eq 1 -and $iniFound[0].Path -eq $iniProfile) 'empty profiles.ini hid the folder fallback'
@@ -580,7 +580,7 @@ if ($remoteExit) { exit $remoteExit }
         Assert-That ($trace.Uninstall -and $trace.ProfilePath -eq 'temporary profile with spaces') 'remote arguments were not forwarded'
         Assert-That (-not (Test-Path -LiteralPath $trace.Directory)) 'remote launcher left temporary files'
     }
-    Write-Host 'PowerShell regressions passed (offline fixtures and temporary installations; no real Windows/UAC verification).'
+    Write-Host 'PowerShell regressions passed (offline fixtures and temporary installations; no Firefox GUI or UAC-prompt verification).'
 } finally {
     $env:APPDATA = $originalAppData
     $env:LOCALAPPDATA = $originalLocalAppData

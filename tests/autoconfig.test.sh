@@ -71,7 +71,7 @@ grep -q 'https://github.com/MrOtherGuy/fx-autoconfig/tree/fixture' "$case_profil
 [[ -f "$case_profile/chrome/JS/replace-new-tab.uc.js" && -f "$case_profile/chrome/CSS/firefox-floating-urlbar.uc.css" ]] || fail 'project payload missing'
 [[ "$(cat "$case_profile/prefs.js")" == 'unchanged prefs' ]] || fail 'prefs changed'
 run_install
-[[ "$(wc -l < "$TEST_DOWNLOAD_TRACE")" == 1 ]] || fail 'downloaded again on unchanged reinstall'
+(( $(wc -l < "$TEST_DOWNLOAD_TRACE") == 1 )) || fail 'downloaded again on unchanged reinstall'
 
 # An upgrade of our loader keeps a backup; third-party loaders remain untouched.
 printf 'older\n' > "$case_profile/chrome/utils/.floating-urlbar-source"
@@ -83,7 +83,7 @@ rm "$case_profile/chrome/utils/.floating-urlbar-source"
 printf 'third-party loader\n' > "$case_profile/chrome/utils/boot.sys.mjs"
 run_install
 [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'third-party loader' ]] || fail 'replaced existing loader'
-[[ "$(wc -l < "$TEST_DOWNLOAD_TRACE")" == 2 ]] || fail 'existing loader triggered download'
+(( $(wc -l < "$TEST_DOWNLOAD_TRACE") == 2 )) || fail 'existing loader triggered download'
 
 # Existing loaders are preserved, with a warning if standard startup files are missing.
 for startup in config.js defaults/pref/config-prefs.js; do
@@ -93,7 +93,7 @@ for startup in config.js defaults/pref/config-prefs.js; do
         fail 'existing loader with missing startup file did not warn'
     [[ ! -e "$case_firefox/$startup" ]] || fail 'changed externally managed startup configuration'
     [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'third-party loader' ]] || fail 'changed external loader during startup check'
-    [[ "$(wc -l < "$TEST_DOWNLOAD_TRACE")" == 2 ]] || fail 'external loader startup check triggered download'
+    (( $(wc -l < "$TEST_DOWNLOAD_TRACE") == 2 )) || fail 'external loader startup check triggered download'
     cp "$fixture/program/$startup" "$case_firefox/$startup"
 done
 
@@ -107,7 +107,7 @@ for startup in config.js defaults/pref/config-prefs.js; do
     run_install
     cmp "$fixture/program/$startup" "$case_firefox/$startup" || fail "did not restore managed $startup"
     [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'preserve local loader edit' ]] || fail 'startup repair overwrote profile loader'
-    [[ "$(wc -l < "$TEST_DOWNLOAD_TRACE")" == "$(( downloads_before + 1 ))" ]] || fail 'startup repair did not fetch verified source'
+    (( $(wc -l < "$TEST_DOWNLOAD_TRACE") == downloads_before + 1 )) || fail 'startup repair did not fetch verified source'
 done
 # Missing notices are repaired without replacing a locally edited loader.
 for notice in fx-autoconfig.LICENSE fx-autoconfig.txt; do
@@ -118,7 +118,7 @@ for notice in fx-autoconfig.LICENSE fx-autoconfig.txt; do
 done
 downloads_before="$(wc -l < "$TEST_DOWNLOAD_TRACE")"
 run_install
-[[ "$(wc -l < "$TEST_DOWNLOAD_TRACE")" == "$downloads_before" ]] || fail 'repaired install downloaded again'
+(( $(wc -l < "$TEST_DOWNLOAD_TRACE") == downloads_before )) || fail 'repaired install downloaded again'
 [[ "$(cat "$case_profile/prefs.js")" == 'unchanged prefs' ]] || fail 'startup repair changed prefs'
 
 # Repair keeps the same checksum and conflict protections as first-time setup.

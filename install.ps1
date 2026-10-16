@@ -333,7 +333,7 @@ function Invoke-FloatingUrlbarInstall {
     if (-not $ProfilePath) {
         $preferredProfile = ''
         if ($Uninstall -and -not $Root -and (Test-Path -LiteralPath $stateFile -PathType Leaf)) {
-            $saved = ([string](Get-Content -LiteralPath $stateFile -Raw)).Trim()
+            $saved = "$(Get-Content -LiteralPath $stateFile -Raw)".Trim()
             if ([IO.Path]::IsPathRooted($saved) -and (Test-Path -LiteralPath (Join-Path $saved 'prefs.js') -PathType Leaf)) {
                 $preferredProfile = $saved
             }
@@ -377,7 +377,7 @@ function Invoke-FloatingUrlbarInstall {
     if ($Uninstall) {
         # Match the chooser's folder comparison when clearing saved state.
         $savedProfile = ''
-        if (Test-Path -LiteralPath $stateFile -PathType Leaf) { $savedProfile = ([string](Get-Content -LiteralPath $stateFile -Raw)).Trim() }
+        if (Test-Path -LiteralPath $stateFile -PathType Leaf) { $savedProfile = "$(Get-Content -LiteralPath $stateFile -Raw)".Trim() }
         if ($savedProfile -and [IO.Path]::IsPathRooted($savedProfile) -and (Test-SameProfilePath $savedProfile $ProfilePath)) {
             Remove-Item -LiteralPath $stateFile
         }

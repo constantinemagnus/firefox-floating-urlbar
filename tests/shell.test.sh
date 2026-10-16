@@ -346,13 +346,13 @@ check_update profile
 check_update
 [[ "$(sed -n '2,3p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --profile "$PROFILE_A")" ]] || fail "default saved profile not reused"
 check_update --choose
-[[ "$(wc -l < "$TEST_INSTALL_TRACE")" == 1 ]] || fail "choose reused saved profile"
+(( $(wc -l < "$TEST_INSTALL_TRACE") == 1 )) || fail "choose reused saved profile"
 check_update --firefox-dir '/temporary Firefox'
 [[ "$(sed -n '2,3p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --firefox-dir '/temporary Firefox')" ]] || fail "Firefox directory not forwarded"
 [[ "$(sed -n '4,5p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --profile "$PROFILE_A")" ]] || fail "Firefox directory suppressed saved profile"
 export PROFILE_ROOT="$TEST_DIR/root-b"
 check_update
-[[ "$(wc -l < "$TEST_INSTALL_TRACE")" == 1 ]] || fail "environment root overridden"
+(( $(wc -l < "$TEST_INSTALL_TRACE") == 1 )) || fail "environment root overridden"
 
 rm -f -- "$TEST_GIT_TRACE" "$TEST_INSTALL_TRACE" "$TEST_UPSTREAM_QUERIED"
 if TEST_GIT_SCENARIO=ahead bash "$TEST_DIR/updater/update.sh" --yes > "$TEST_DIR/ahead.log" 2>&1; then
