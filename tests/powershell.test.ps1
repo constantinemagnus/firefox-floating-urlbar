@@ -586,3 +586,5 @@ if ($remoteExit) { exit $remoteExit }
     $env:LOCALAPPDATA = $originalLocalAppData
     Remove-Item -LiteralPath $temp -Recurse -Force
 }
+# Expected failing child processes must not become the suite's exit code.
+exit 0
