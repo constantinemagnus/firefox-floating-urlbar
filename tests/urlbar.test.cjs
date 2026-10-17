@@ -75,7 +75,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
             this.selectionEnd = this.value.length;
         }
     }
-    const elements = new Map(["urlbar", "urlbar-input", "mainCommandSet", "mainKeyset", "key_newNavigatorTab", "navigator-toolbox"]
+    const elements = new Map(["urlbar", "urlbar-input", "mainCommandSet", "mainKeyset", "key_newNavigatorTab", "navigator-toolbox", "toolbar-context-menu"]
         .map(id => [id, new Element(id)]));
     const bar = elements.get("urlbar");
     const input = elements.get("urlbar-input");
@@ -128,6 +128,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
                 !navbar.hasAttribute("overflowing") && !navbar.hasAttribute("nonemptyoverflow");
             return {
                 display: node.hasAttribute("hidden") || unavailableOverflow ? "none" : "flex",
+                paddingTop: node.style.getPropertyValue("padding-top") || "0px",
                 anchorName: node.style.getPropertyValue("anchor-name") || "none"
             };
         };
@@ -718,6 +719,68 @@ test("unrelated background tabs leave Ctrl+T intent and the editing value intact
     assert.equal(s.input.value, "https://new.example/");
     s.gURLBar.handleCommand(s.key("Enter"));
     assert.equal(s.loads[0].options.where, "tab");
+});
+
+test("late location updates cannot replace a fresh Ctrl+T query after blank-tab reuse", () => {
+    const updates = [];
+    const s = setup({ configureUrlbar(bar) {
+        bar.setURI = function (update) {
+            updates.push(update);
+            this.setValue(update?.uri?.spec ?? update?.spec ?? "https://previous.example/");
+            return "native update";
+        };
+    } });
+    s.browser.selectedTab.isEmpty = true;
+    s.ctrlT(); s.type("https://previous.example/");
+    s.gURLBar.handleCommand(s.key("Enter"));
+    assert.equal(s.loads[0].options.where, "current");
+    const update = { uri: { spec: "https://previous.example/" } };
+    assert.equal(s.gURLBar.setURI(update), "native update");
+    s.browser.selectedTab.isEmpty = false;
+    s.ctrlT();
+    // Firefox clears the browser's typed value on a late location change.
+    s.gURLBar.userTypedValue = null;
+    s.gURLBar.setURI(update);
+    assert.equal(s.input.value, "");
+    assert.equal(s.gURLBar.untrimmedValue, "");
+    s.type("youtube");
+    s.input.selectionStart = 2;
+    s.input.selectionEnd = 5;
+    s.gURLBar.searchMode = { engineName: "Selected" };
+    s.gURLBar.setURI(update.uri); // Older Firefox passes the URI directly.
+    assert.equal(s.input.value, "youtube");
+    assert.equal(s.gURLBar.untrimmedValue, "youtube");
+    assert.equal(s.gURLBar.userTypedValue, "youtube");
+    assert.deepEqual([s.input.selectionStart, s.input.selectionEnd], [2, 5]);
+    assert.equal(s.gURLBar.searchMode.engineName, "Selected");
+    assert.equal(updates.length, 1);
+    s.gURLBar.handleCommand(s.key("Enter"));
+    assert.equal(s.loads[1].options.where, "tab");
+    assert.equal(s.loads[1].options.loadRequest.urlLoad.url, "youtube");
+    assert.equal(s.gURLBar.setURI(update), "native update");
+});
+
+test("Ctrl+T leaves native URI reverts, tab switches and other shortcuts intact", () => {
+    const calls = [];
+    const s = setup({ configureUrlbar(bar) {
+        bar.setURI = function (...args) { calls.push({ receiver: this, args }); return "native update"; };
+    } });
+    s.ctrlT();
+    for (const args of [[], [null, true], [{ hideSearchTerms: true }],
+        [{ uri: { spec: "https://other.example/" }, dueToTabSwitch: true }],
+        [{ spec: "https://other.example/" }, true]]) {
+        assert.equal(s.gURLBar.setURI(...args), "native update");
+        assert.equal(calls.at(-1).receiver, s.gURLBar);
+        assert.deepEqual(calls.at(-1).args, args);
+    }
+    s.browser.tabContainer.emit("TabSelect");
+    const update = { uri: { spec: "https://other.example/" } };
+    assert.equal(s.gURLBar.setURI(update), "native update");
+    s.key("l", { ctrlKey: true });
+    assert.equal(s.gURLBar.setURI(update), "native update");
+    s.ctrlT();
+    s.setPref("uc.floatingurlbar.enabled", false);
+    assert.equal(s.gURLBar.setURI(update), "native update");
 });
 
 test("blank-tab submission commits without cancellation reverting the pending value", () => {
@@ -1983,6 +2046,38 @@ test("native overflow never occupies the compact header, even with the obsolete 
             assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "80px");
         }
     }
+});
+
+test("compact header gaps open the native toolbar menu without replacing other context menus", () => {
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const sidebar = s.widget("sidebar-container");
+    sidebar.style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    sidebar.style.setProperty("padding-top", "116px");
+    sidebar.rect = { top: 20 };
+    const calls = [];
+    s.widget("toolbar-context-menu").openPopupAtScreen = (...args) => calls.push(args);
+    const event = (overrides = {}) => ({
+        target: sidebar, clientY: 70, screenX: 300, screenY: 170,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() { this.stopped = true; }, ...overrides
+    });
+    const header = event();
+    sidebar.emit("contextmenu", header);
+    assert.equal(header.defaultPrevented, true);
+    assert.equal(header.stopped, true);
+    assert.deepEqual(calls[0], [300, 170, true, header]);
+    for (const overrides of [{ target: s.input }, { target: s.widget("back-button") },
+        { target: s.browser.tabContainer }, { clientY: 136 }, { clientY: 19 }, { defaultPrevented: true }]) {
+        sidebar.emit("contextmenu", event(overrides));
+    }
+    sidebar.style.setProperty("anchor-name", "none");
+    sidebar.emit("contextmenu", event());
+    sidebar.style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    s.setPref("uc.floatingurlbar.enabled", false);
+    sidebar.emit("contextmenu", event());
+    assert.equal(calls.length, 1);
+    s.window.emit("unload");
+    assert.equal(sidebar.listeners.get("contextmenu").length, 0);
 });
 
 test("compact controls follow customization and include pinned extensions after the field", () => {

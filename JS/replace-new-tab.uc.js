@@ -345,6 +345,19 @@
      log("wrapped fallback-navigation hook", "gURLBar.controller.resolveFallbackNavigation");
  }
 
+ if (typeof gURLBar.setURI === "function") {
+     const original = gURLBar.setURI;
+     gURLBar.setURI = function (...args) {
+         // A previous page can finish loading while Ctrl+T edits its next destination.
+         const update = args[0];
+         if (editingSession?.newTab && (update?.uri || update?.spec) &&
+             !update.dueToTabSwitch && !args[1]) {
+             return;
+         }
+         return original.apply(this, args);
+     };
+ }
+
  // ---------------------------------------------------------------
  // Flow control
  // ---------------------------------------------------------------
@@ -1057,6 +1070,22 @@
          const compactLayoutActive = () =>
              compactEnabled() &&
              window.getComputedStyle(sidebar)?.anchorName === "--floatingurlbar-sidebar";
+         const onHeaderContextMenu = event => {
+             if (event.defaultPrevented || event.target !== sidebar || !compactLayoutActive()) {
+                 return;
+             }
+             const y = event.clientY - sidebar.getBoundingClientRect().top;
+             if (!(y >= 0 && y < Number.parseFloat(window.getComputedStyle(sidebar).paddingTop))) {
+                 return;
+             }
+             const menu = document.getElementById("toolbar-context-menu");
+             if (!menu) return;
+             menu.openPopupAtScreen(event.screenX, event.screenY, true, event);
+             event.preventDefault();
+             event.stopPropagation();
+         };
+         // Handle header gaps before Firefox's sidebar context menu claims them.
+         sidebar.addEventListener("contextmenu", onHeaderContextMenu, true);
          // Read the trigger height instead of mirroring the CSS constant.
          const revealStripHeight = () => {
              const height = Number.parseFloat(window.getComputedStyle(toolbox, "::before")?.height);
@@ -1142,6 +1171,7 @@
              widgetsObserver.disconnect();
              sidebarObserver.disconnect();
              placeholder.remove();
+             sidebar.removeEventListener("contextmenu", onHeaderContextMenu, true);
              clearControls();
              toolbox.removeEventListener("mousedown", onToolboxPress, true);
              toolbox.removeEventListener("mousemove", onRevealMove, true);

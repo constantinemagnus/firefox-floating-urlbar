@@ -1,11 +1,10 @@
 # Firefox Floating URL Bar & Compact Mode
 
-A Zen-style floating URL bar for Firefox, with an optional [compact mode](#compact-mode) for vertical tabs.
+A Zen-style floating URL bar for Firefox. Ctrl+T opens the bar without creating a blank tab; Enter opens your URL or search in a new tab.
 
-- **Floating URL bar:** Ctrl+T opens a centered floating bar without creating a blank tab; Enter opens the URL or search in a new tab. Ctrl+L navigates in the current tab, and Ctrl+K opens centered search.
-- **Compact mode:** Puts the address field, menu, and your chosen toolbar buttons above vertical tabs on either side of the window. The remaining toolbar appears on hover at the top edge, leaving more room for the page. It is off by default.
+Optional [compact mode](#compact-mode) puts the address field, toolbar buttons, and pinned extensions above vertical tabs. It is off by default.
 
-It uses an [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user script and a stylesheet. No extension or theme replacement is required.
+Uses an [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user script and a stylesheet. No extension or replacement theme needed.
 
 ## Floating URL bar demo
 
@@ -16,30 +15,29 @@ It uses an [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user scr
 ## Compact mode demo
 
 <p align="center">
-  <img src="assets/compact-demo.png" alt="Firefox compact mode with the address field and toolbar buttons above vertical tabs" width="800">
+  <img src="assets/compact-demo.png" alt="Firefox compact mode with window controls, toolbar buttons, and pinned extensions above vertical tabs" width="800">
 </p>
 
 ## Behaviour
 
 | Action | Result |
 | --- | --- |
-| Ctrl+T (Cmd+T on macOS) | Centred URL bar; Enter opens the result in a new tab |
-| Escape / click away | Cancels floating URL-bar editing, discards what you typed, and restores the current page's address |
-| Ctrl+L (Cmd+L on macOS) | Centred URL bar; Enter navigates in the current tab |
-| Ctrl+K (Cmd+K on macOS) | Centred search mode; Enter searches in the current tab. Outside compact layout, a separate Firefox search bar keeps native focus behavior |
-| Click the normal address field | Uses native editing without centering or dimming; suggestions and search work normally |
-| Click inside the floating address field | Keeps the current shortcut's search mode and navigation destination |
+| Ctrl+T | Centered URL bar; Enter opens the result in a new tab, reusing an empty tab |
+| Ctrl+L | Centered URL bar; Enter navigates in the current tab |
+| Ctrl+K | Centered search in the current tab; a separate search bar stays native outside compact mode |
+| Escape / click away | Cancels editing and restores the current page's address |
+| Click the normal address field | Native editing, suggestions, and search without floating |
 | F6 / Alt+D | Normal Firefox behavior; does not open the floating bar |
 | `+` button, File → New Tab, Ctrl+N (Cmd+N on macOS) | Opens a normal tab or window without activating the centered bar |
 
-By default, the bar opens and closes without animation and dims the background by 35%. Firefox's suggestion settings are respected; empty centered bars keep the same rounded appearance. The input, suggestions, and menus stay above the dimming.
+On macOS, use Cmd instead of Ctrl. Firefox's suggestion settings are respected. By default, the floating bar dims the background by 35% and opens without animation.
 
 ## Requirements
 
-- Firefox. The installers set up [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) when needed, or reuse an existing loader.
-- CSS anchor positioning support. Without it, the stylesheet has no effect and the bar stays in its normal position.
-- Firefox UI tested on Firefox 157.0.1 on Linux. Installer regressions run on Windows and macOS (Intel and Apple Silicon); GUI behavior and elevation prompts on those platforms still need manual testing.
-- The script uses Firefox's internal URL bar APIs. If required APIs are missing, it logs a warning in the Browser Console and preserves normal Ctrl+T behavior.
+- Firefox with CSS anchor positioning support. Tested on Firefox 157.0.1 on Linux; Windows and macOS UI still need manual testing.
+- [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig), installed automatically when supported or reused if present.
+
+If required Firefox APIs are missing, the script logs a Browser Console warning and leaves Ctrl+T native. Without CSS anchor support, the bar stays in the toolbar.
 
 > These files run with full browser privileges. Read them before installing.
 
@@ -139,21 +137,19 @@ Selects a profile, suggesting the last installed profile when available; use `--
 
 ## Preferences (about:config, optional)
 
-Create these preferences as **Boolean** values in `about:config` to override the defaults.
+Create these as **Boolean** preferences in `about:config` to override the defaults.
 
 | Preference | Default | Meaning |
 | --- | --- | --- |
-| `uc.floatingurlbar.enabled` | `true` | Master switch: set to `false` to disable all features and restore native Firefox shortcuts and appearance immediately |
+| `uc.floatingurlbar.enabled` | `true` | Turn all features off or on immediately, without restarting |
 | `uc.floatingurlbar.debug` | `false` | Log script activity to the Browser Console (Ctrl+Shift+J) |
-| `uc.floatingurlbar.animate` | `false` | CSS-only: enable the 0.3-second position/width animation |
-| `uc.floatingurlbar.dim` | `true` | CSS-only: dim the background by 35% while the bar floats |
-| `uc.floatingurlbar.glass` | `false` | Experimental, CSS-only: translucent floating input, suggestions, and engine shortcuts with background blur |
+| `uc.floatingurlbar.animate` | `false` | Animate the floating bar's position and width over 0.3 seconds |
+| `uc.floatingurlbar.dim` | `true` | Dim the background while the bar floats |
+| `uc.floatingurlbar.glass` | `false` | Experimental: translucent floating bar and suggestions with background blur |
 | `uc.floatingurlbar.compact` | `false` | Experimental: compact toolbar above expanded vertical tabs |
 | `uc.floatingurlbar.compact.pins.manual` | `false` | Use Firefox's native pinned-tab height and resize handle instead of fitting rows automatically in compact mode |
 
-To test Firefox without this customization, set `uc.floatingurlbar.enabled` to `false`; no uninstall or restart is needed. Set it back to `true` to re-enable your saved settings.
-
-The system's reduced-motion preference always disables animation. The optional animation is best suited to the normal toolbar layout.
+The master switch preserves your settings. System reduced-motion settings always disable animation.
 
 To adjust dimming, change `--floatingurlbar-dim-opacity` in `CSS/firefox-floating-urlbar.uc.css` or override it in `userChrome.css`:
 
@@ -175,29 +171,22 @@ Set `uc.floatingurlbar.glass` to `true` in `about:config` for the translucent ap
 
 ## Compact mode
 
-Set `uc.floatingurlbar.compact` to `true` to put the address field and menu above expanded vertical tabs on either side. Collapsed sidebars, horizontal tabs, fullscreen and toolbar customization use the normal layout. Expand-on-hover always uses the normal layout, even when pinned open; turn it off to use compact mode. Floating shortcuts still work.
+Set `uc.floatingurlbar.compact` to `true` in `about:config` and expand vertical tabs on either side. Turn off Firefox's sidebar expand-on-hover setting to use this layout.
 
-Pinned extensions appear in the compact header automatically. In **Customize Toolbar**, move other buttons before the address field to show them there too. Remaining buttons stay in the toolbar revealed by hovering near the top edge. The native **Extensions** button defaults to the left, beside the menu, unless hidden in Firefox's settings; moving it before the address field sets its header order. Unpinned extensions remain available in its panel. The overflow button is hidden.
+- **Buttons:** Pinned extensions appear automatically. In **Customize Toolbar**, move other buttons before the address field to add them to the header. Unpinned extensions stay in the Extensions panel.
+- **Editing:** Click the address field to expand it beside the sidebar and navigate in the current tab. Click empty sidebar space to dismiss it. Ctrl+T, Ctrl+L, and Ctrl+K still open the centered bar.
+- **Site controls:** Use the centered bar for search engines, site information, permissions, and sharing indicators; these are hidden in the sidebar field.
+- **Toolbar:** Hold the pointer still near the top edge to reveal it. Right-click empty header space for the toolbar menu. Drag empty header, toolbar, or vertical-tab space to move the window.
+- **Window controls:** On Windows and Linux, they sit above the header when space allows; narrow sidebars keep them in the hover toolbar. macOS keeps its native placement.
+- **Pinned tabs:** Resize automatically, scrolling at 40% of window height. Enable `uc.floatingurlbar.compact.pins.manual` to use Firefox's saved height and resize handle.
 
-Click the address field to expand it beside the sidebar and navigate in the current tab; click empty sidebar space to dismiss editing. Ctrl+T, Ctrl+L and Ctrl+K use the centered bar, leaving Firefox's localized search/address placeholder in the sidebar. Click that placeholder to refocus the centered input. In compact mode, Ctrl+K uses URL-bar search even if a separate search bar is configured.
-
-Use the centered bar to change search engines or access site information and permissions, including warnings and sharing indicators; these controls are hidden in the sidebar field. Selected engines remain active. Right-side controls appear on hover or focus and while their popup is open.
-
-Pinned tabs resize automatically, scrolling at 40% of the window height. Set `uc.floatingurlbar.compact.pins.manual` to `true` to use Firefox's saved height and resize handle instead.
-
-Hold the pointer still near the top edge for a moment to reveal the remaining toolbar. The hover area extends farther down in restored windows to make it easier to reach. Drag empty space in the revealed toolbar, compact header or vertical tab area to move the window.
-
-On Windows and Linux, native window controls occupy their own row above the compact header when they fit, with close at the sidebar's outer edge. Narrow sidebars keep them in the hover toolbar; a right-hand sidebar puts these fallback controls on the left to keep the header clear. Placement follows the sidebar automatically. macOS keeps native placement.
-
-## Other URL bar tweaks
-
-Other URL bar customizations may conflict with this stylesheet. Disable conflicting rules if the floating bar displays incorrectly.
+Collapsed sidebars, horizontal tabs, fullscreen, and toolbar customization use the normal layout.
 
 ## Troubleshooting
 
 - Nothing changed after installing: clear the startup cache (`about:support` → **Clear startup cache**) and restart Firefox. Check that fx-autoconfig is installed correctly.
 - Ctrl+T behaves normally or Enter opens in the current tab: enable debug logging as described below.
-- The bar isn't centred: disable conflicting URL bar tweaks. If that does not help, open an issue with your Firefox version.
+- The bar looks wrong or isn't centered: disable other URL bar customizations that may conflict.
 
 To debug, set `uc.floatingurlbar.debug` to `true` in `about:config`, restart Firefox, and open the Browser Console (Ctrl+Shift+J). Include the script's messages and your Firefox version when opening an issue.
 
@@ -210,11 +199,9 @@ pwsh -NoProfile -File tests/powershell.test.ps1
 bash tests/macos.test.sh # native macOS only
 ```
 
-The [platform workflow](.github/workflows/platform-tests.yml) runs on GitHub-hosted Windows and macOS runners, including Intel and Apple Silicon. Windows exercises PowerShell 5.1 and 7; macOS uses system Bash and BSD tools. It runs on pushes and pull requests, and can be started manually after the workflow reaches the default branch.
+The [platform workflow](.github/workflows/platform-tests.yml) checks Windows PowerShell 5.1/7 and macOS Intel/Apple Silicon. Installer tests use temporary profiles and offline fixtures; JavaScript tests mock Firefox. No real profiles are changed.
 
-Installer tests use isolated temporary profiles, application directories and offline download fixtures. They check profile discovery/selection, installation, removal, backups and filesystem protections. The macOS suite also checks app-bundle paths, Unicode and bracketed profile names, `shasum`, and case-insensitive profile identity where supported. The JavaScript suite mocks Firefox objects.
-
-The PowerShell suite uses symbolic links; local Windows runs need Developer Mode or administrator rights. Firefox appearance, native window dragging, keyboard behavior in the GUI, and elevation prompts still require manual testing on each OS. CI does not launch Firefox or modify real profiles.
+Local Windows tests need Developer Mode or administrator rights for symbolic links. Firefox appearance, keyboard behavior, window dragging, and elevation prompts need manual testing.
 
 ## License and attribution
 
