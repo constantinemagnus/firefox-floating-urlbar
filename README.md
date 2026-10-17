@@ -43,6 +43,10 @@ If required Firefox APIs are missing, the script logs a Browser Console warning 
 
 ## Install
 
+Installs the script and stylesheet into your selected profile. If fx-autoconfig is missing, setup also adds `config.js` and `defaults/pref/config-prefs.js` to Firefox's installation directory (affecting all profiles using it) and sets `general.config.sandbox_enabled=false`. Existing loaders are preserved.
+
+Run installers as your normal user; sudo/UAC is requested only for protected startup-file writes. One-command installers fetch current `main` over HTTPS; fx-autoconfig is pinned to the commit in `fx-autoconfig.conf` and SHA-256 verified.
+
 ### Linux and macOS
 
 Arch users can manage fx-autoconfig with a [local pacman package](packaging/fx-autoconfig/README.md).
@@ -65,7 +69,7 @@ Options: `--profile /path/to/profile`, `--root DIR`, `--firefox-dir /path/to/fir
 
 ### Windows
 
-Local install verified; remote network installation and UAC prompts still need manual testing.
+Local installation was verified in earlier releases; the new rollback behavior, remote network installation, and UAC prompts still need manual testing.
 
 One-command:
 
@@ -83,10 +87,7 @@ Options: `-ProfilePath 'C:\path\to\profile'`, `-FirefoxDirectory 'C:\Program Fil
 
 ### Notes
 
-- Regular Firefox installs support automatic fx-autoconfig setup; Flatpak/Snap need separate AutoConfig setup first (an existing loader is reused). Existing loaders are preserved.
-- Run installers as your normal user; sudo/UAC is requested only for protected Firefox startup-file writes.
-- One-command installers fetch current `main` over HTTPS; the fx-autoconfig download is pinned to the commit in `fx-autoconfig.conf` and SHA-256 verified. See [ATTRIBUTION.md](ATTRIBUTION.md).
-- Automatic setup adds privileged startup files (`config.js`, `defaults/pref/config-prefs.js`) to Firefox's installation directory (all profiles) and sets `general.config.sandbox_enabled=false` for the AutoConfig sandbox.
+- Regular Firefox installs support automatic fx-autoconfig setup; Flatpak/Snap need separate AutoConfig setup first (an existing loader is reused).
 - Restart Firefox; if nothing changes, clear the startup cache in `about:support`.
 
 ### Manual (any OS)
@@ -177,6 +178,7 @@ Set `uc.floatingurlbar.compact` to `true` in `about:config` and expand vertical 
 - **Editing:** Click the address field to expand it beside the sidebar and navigate in the current tab. Click empty sidebar space to dismiss it. Ctrl+T, Ctrl+L, and Ctrl+K still open the centered bar.
 - **Site controls:** Use the centered bar for search engines, site information, permissions, and sharing indicators; these are hidden in the sidebar field.
 - **Toolbar:** Hold the pointer still near the top edge to reveal it. Right-click empty header space for the toolbar menu. Drag empty header, toolbar, or vertical-tab space to move the window.
+- **Keyboard:** F10 or Alt activates the native menubar on Windows and Linux. Hidden toolbar controls stay out of the Tab order.
 - **Window controls:** On Windows and Linux, they sit above the header when space allows; narrow sidebars keep them in the hover toolbar. macOS keeps its native placement.
 - **Pinned tabs:** Resize automatically, scrolling at 40% of window height. Enable `uc.floatingurlbar.compact.pins.manual` to use Firefox's saved height and resize handle.
 
@@ -190,6 +192,15 @@ Collapsed sidebars, horizontal tabs, fullscreen, and toolbar customization use t
 
 To debug, set `uc.floatingurlbar.debug` to `true` in `about:config`, restart Firefox, and open the Browser Console (Ctrl+Shift+J). Include the script's messages and your Firefox version when opening an issue.
 
+With the feature enabled, successful initialization logs `wrapped …` and finishes with `loaded`, for example:
+
+```text
+[Replace New Tab] wrapped whereToOpen
+[Replace New Tab] loaded
+```
+
+Hook names vary by Firefox version, and other messages may appear between these lines. They confirm initialization; navigation still needs testing.
+
 ## Development checks
 
 ```bash
@@ -200,7 +211,7 @@ bash tests/macos.test.sh # native macOS only
 
 The Node.js and shell runner prints counts, duration, and exit status on success, and full output on failure. It stops at the first failed suite and returns its exit code. Each run keeps the original output in the printed temporary log paths. Shell tests report one suite because their assertions have no individual case counter. For live, verbose output, run `node --test tests/urlbar.test.cjs` or `bash tests/shell.test.sh` directly.
 
-The [platform workflow](.github/workflows/platform-tests.yml) checks Windows PowerShell 5.1/7 and macOS Intel/Apple Silicon. Installer tests use temporary profiles and offline fixtures; JavaScript tests mock Firefox. No real profiles are changed.
+The [platform workflow](.github/workflows/platform-tests.yml) checks Linux, Windows PowerShell 5.1/7, and macOS Intel/Apple Silicon. Installer tests use temporary profiles and offline fixtures; JavaScript tests mock Firefox. No real profiles are changed.
 
 Local Windows tests need Developer Mode or administrator rights for symbolic links. Firefox appearance, keyboard behavior, window dragging, and elevation prompts need manual testing.
 

@@ -40,6 +40,9 @@
     :root {
         /* 0 disables dimming; 1 is opaque black. */
         --floatingurlbar-dim-opacity: 0.35;
+        --floatingurlbar-compact-step: 36px;
+        --floatingurlbar-compact-button-size: 32px;
+        --floatingurlbar-compact-input-height: 32px;
     }
 
     /*
@@ -300,7 +303,7 @@
                         visibility: visible;
                         position-visibility: always;
                         .titlebar-buttonbox {
-                            min-height: 32px;
+                            min-height: var(--floatingurlbar-compact-button-size);
                             direction: ltr;
                             flex-direction: row-reverse !important;
                         }
@@ -436,7 +439,7 @@
                     top: calc(anchor(top) + var(--floatingurlbar-compact-input-top, 40px));
                     left: calc(anchor(left) + 8px);
                     width: calc(anchor-size(width) - 16px);
-                    height: 32px;
+                    height: var(--floatingurlbar-compact-input-height);
                     box-sizing: border-box;
                     margin: 0;
                     padding-inline: 12px;
@@ -458,7 +461,7 @@
                 /* Until a floating shortcut's native focus arrives, keep sidebar geometry.
                  * Dropping it on [active] alone flashes the toolbar field. */
                 #urlbar:not([floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold])) {
-                    --floatingurlbar-height: 32px;
+                    --floatingurlbar-height: var(--floatingurlbar-compact-input-height);
                     --floatingurlbar-width: calc(anchor-size(width) - 16px);
                     --floatingurlbar-left: calc(anchor(left) + 8px);
                     --floatingurlbar-margin-top: 0px;
@@ -504,10 +507,10 @@
                 :is([floatingurlbar-compact-control], #PanelUI-menu-button) {
                     position: fixed !important;
                     position-anchor: --floatingurlbar-sidebar;
-                    top: calc(anchor(top) + var(--floatingurlbar-compact-caption-offset, 0px) + 4px + var(--floatingurlbar-compact-row, 0) * 36px) !important;
-                    left: calc(anchor(left) + 8px + var(--floatingurlbar-compact-column, 0) * 36px) !important;
-                    width: 32px !important;
-                    height: 32px !important;
+                    top: calc(anchor(top) + var(--floatingurlbar-compact-caption-offset, 0px) + 4px + var(--floatingurlbar-compact-row, 0) * var(--floatingurlbar-compact-step)) !important;
+                    left: calc(anchor(left) + 8px + var(--floatingurlbar-compact-column, 0) * var(--floatingurlbar-compact-step)) !important;
+                    width: var(--floatingurlbar-compact-button-size) !important;
+                    height: var(--floatingurlbar-compact-button-size) !important;
                     margin: 0 !important;
                     visibility: visible;
                     position-visibility: always;

@@ -220,6 +220,50 @@ for script in install.sh uninstall.sh; do
     [[ "$(load_saved_profile)" == "$PROFILE_A" ]] || fail "$script changed saved profile on backup failure"
 done
 
+# A failure on the second payload must not leave a mixed installation.
+mkdir "$TEST_DIR/payload-failure-bin"
+export TEST_PAYLOAD_REAL_CP TEST_PAYLOAD_REAL_MV
+TEST_PAYLOAD_REAL_CP="$(command -v cp)"
+TEST_PAYLOAD_REAL_MV="$(command -v mv)"
+cat > "$TEST_DIR/payload-failure-bin/cp" <<'CP'
+#!/usr/bin/env bash
+dest="${*: -1}"
+if [[ "$TEST_PAYLOAD_FAILURE" == stage && "$dest" == */CSS/firefox-floating-urlbar.uc.css ]] ||
+   [[ "$TEST_PAYLOAD_FAILURE" == backup && "$dest" == */firefox-floating-urlbar.uc.css.bak-* ]]; then exit 1; fi
+exec "$TEST_PAYLOAD_REAL_CP" "$@"
+CP
+cat > "$TEST_DIR/payload-failure-bin/mv" <<'MV'
+#!/usr/bin/env bash
+src="${@: -2:1}"
+if [[ "$TEST_PAYLOAD_FAILURE" == replace && "$src" == */.floating-urlbar-install.*/CSS/firefox-floating-urlbar.uc.css ]]; then exit 1; fi
+exec "$TEST_PAYLOAD_REAL_MV" "$@"
+MV
+chmod +x "$TEST_DIR/payload-failure-bin/"*
+for state in existing fresh; do
+    for phase in stage backup replace; do
+        [[ "$state" != fresh || "$phase" != backup ]] || continue
+        transaction_profile="$TEST_DIR/payload-$state-$phase/profile"
+        make_profile "$transaction_profile"
+        js="$transaction_profile/chrome/JS/replace-new-tab.uc.js"
+        css="$transaction_profile/chrome/CSS/firefox-floating-urlbar.uc.css"
+        if [[ "$state" == existing ]]; then
+            printf 'original JS\n' > "$js"
+            printf 'original CSS\n' > "$css"
+        fi
+        if TEST_PAYLOAD_FAILURE="$phase" PATH="$TEST_DIR/payload-failure-bin:$PATH" \
+            bash "$REPO_DIR/install.sh" --profile "$transaction_profile" > "$TEST_DIR/payload-failure.log" 2>&1; then
+            fail "accepted $state payload $phase failure"
+        fi
+        if [[ "$state" == existing ]]; then
+            [[ "$(cat "$js")" == 'original JS' && "$(cat "$css")" == 'original CSS' ]] || fail "$phase left mixed payloads"
+        else
+            [[ ! -e "$js" && ! -e "$css" ]] || fail "$phase left a partial fresh installation"
+        fi
+        [[ "$(load_saved_profile)" == "$PROFILE_A" ]] || fail "$phase changed saved profile"
+        if compgen -G "$transaction_profile/chrome/.floating-urlbar-install.*" >/dev/null; then fail "$phase leaked staged files"; fi
+    done
+done
+
 # Persisted state is another write destination: linked records must not clobber
 # an unrelated file even when save_profile is used directly.
 for kind in symlink hardlink; do

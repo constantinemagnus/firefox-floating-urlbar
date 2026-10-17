@@ -8,7 +8,8 @@ const source = fs.readFileSync(path.join(__dirname, "../JS/replace-new-tab.uc.js
 
 function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missingCommitAPI = false,
     fallbackResult = Promise.resolve({}), configureUrlbar, prefs = {}, anchorSupport = true, compactControls = false,
-    separateSearchBar = null, revealStripHeight = "3px", nativeCaptions = false, platform = "Linux" } = {}) {
+    separateSearchBar = null, revealStripHeight = "3px", nativeCaptions = false, missingCaptionBox = false,
+    compactStep = "36px", compactInputHeight = "32px", platform = "Linux" } = {}) {
     class Element {
         constructor(id) {
             this.id = id;
@@ -91,6 +92,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
     const window = new Element("window");
     window.CSS = { supports: () => anchorSupport };
     const resizeCallbacks = [];
+    const styleReads = [];
     const captions = [];
     elements.get("navigator-toolbox").querySelectorAll = () => captions;
     if (compactControls) {
@@ -108,7 +110,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
                 const caption = new Element(`caption-${id}`);
                 const box = new Element(`caption-box-${id}`);
                 box.rect = { width: 120, height: 32 };
-                caption.querySelector = () => box;
+                caption.querySelector = () => missingCaptionBox ? null : box;
                 caption.parentElement = toolbar;
                 captions.push(caption);
                 elements.set(caption.id, caption);
@@ -122,6 +124,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
             ["back-button", "forward-button", "stop-reload-button", "urlbar-container", "downloads-button"]
                 .map(id => elements.get(id));
         window.getComputedStyle = (node, pseudo) => {
+            styleReads.push(node);
             if (pseudo === "::before") return { height: revealStripHeight };
             const navbar = elements.get("nav-bar");
             const unavailableOverflow = node.id === "nav-bar-overflow-button" &&
@@ -129,12 +132,16 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
             return {
                 display: node.hasAttribute("hidden") || unavailableOverflow ? "none" : "flex",
                 paddingTop: node.style.getPropertyValue("padding-top") || "0px",
-                anchorName: node.style.getPropertyValue("anchor-name") || "none"
+                anchorName: node.style.getPropertyValue("anchor-name") || "none",
+                getPropertyValue: name => ({
+                    "--floatingurlbar-compact-step": compactStep,
+                    "--floatingurlbar-compact-input-height": compactInputHeight
+                })[name] || ""
             };
         };
         window.ResizeObserver = class {
             constructor(fn) { this.callback = fn; resizeCallbacks.push(fn); }
-            observe() {}
+            observe(node) { assert.ok(node instanceof Element, "ResizeObserver requires an element"); }
             disconnect() { resizeCallbacks.splice(resizeCallbacks.indexOf(this.callback), 1); }
         };
     }
@@ -274,7 +281,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
             return legacy ? this._loadURL(options, event) : parentController.loadURL(options);
         },
         openSearchEnginePage(query, options) {
-            const where = this.controller.whereToOpen(options.event);
+            const where = options.where;
             if (query) return parentController.openSERP(options.engine, query, where, true, page.browserId);
             return parentController.openSearchForm(options.engine, where, true, page.browserId);
         }
@@ -319,7 +326,7 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
         Date: class extends Date { static now() { return now; } }
     });
     return {
-        bar, input, window, page, browser, gURLBar, parentController, loads,
+        bar, input, window, page, browser, gURLBar, parentController, loads, styleReads,
         toolbox: elements.get("navigator-toolbox"),
         widget: id => elements.get(id),
         root: document.documentElement,
@@ -1370,10 +1377,29 @@ test("Alt+Enter modifiers preserve native background policy and blank-tab reuse"
 
 test("search-engine form actions complete only their originating session", () => {
     const s = setup(); s.ctrlT();
-    s.gURLBar.openSearchEnginePage("", { event: {}, engine: "chosen-engine" });
+    s.gURLBar.openSearchEnginePage("", { event: {}, engine: "chosen-engine", where: "current" });
     assert.equal(s.loads[0].method, "openSearchForm");
     assert.deepEqual(s.loads[0].args, ["chosen-engine", "tab", true, 1]);
     assert.equal(s.active(), false);
+});
+
+test("engine page actions redirect supplied destinations only for nonempty Ctrl+T flows", () => {
+    for (const query of ["", "search terms"]) {
+        for (const flow of ["new", "current", "native", "disabled", "empty"]) {
+            for (const where of ["current", "tab", "tabshifted", "window"]) {
+                const s = setup({ prefs: { "uc.floatingurlbar.enabled": flow !== "disabled" } });
+                if (["new", "empty"].includes(flow)) s.ctrlT();
+                if (flow === "current") { s.key("l", { ctrlKey: true }); s.input.focus(); }
+                if (flow === "empty") s.browser.selectedTab.isEmpty = true;
+                const options = { event: { shiftKey: true }, engine: "chosen-engine", where };
+                s.gURLBar.openSearchEnginePage(query, options);
+                assert.equal(s.loads[0].args[query ? 2 : 1],
+                    flow === "new" && where === "current" ? "tab" : where, `${flow}/${query}/${where}`);
+                assert.equal(options.where, where);
+                assert.equal(s.active(), false);
+            }
+        }
+    }
 });
 
 test("cancelled popup cleanup retries a blur cancellation", () => {
@@ -1677,6 +1703,67 @@ test("compact strip reveals only after a stationary 200ms hover", () => {
     assert.equal(native.toolbox.hasAttribute(attr), false);
 });
 
+test("compact mode skips layout work while off and supports live preference toggles", () => {
+    const s = setup({ compactControls: true });
+    const order = ["back-button", "forward-button", "stop-reload-button", "urlbar-container"];
+    s.toolbarOrder(order);
+    s.resizeSidebar(180);
+    assert.equal(s.styleReads.length, 0);
+    assert.equal(s.widget("floatingurlbar-sidebar-placeholder"), undefined);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), false);
+    s.setPref("uc.floatingurlbar.compact", true);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), true);
+    assert.equal(s.widget("back-button").hasAttribute("floatingurlbar-compact-control"), true);
+    assert.ok(s.widget("floatingurlbar-sidebar-placeholder"));
+    s.ctrlT(); s.type("keep this query");
+    s.toolbox.emit("mousedown", { button: 0 });
+    s.setPref("uc.floatingurlbar.compact", false);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), false);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-press"), false);
+    assert.equal(s.widget("back-button").hasAttribute("floatingurlbar-compact-control"), false);
+    assert.equal(s.widget("floatingurlbar-sidebar-placeholder"), undefined);
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "");
+    assert.equal(s.input.value, "keep this query");
+    assert.equal(s.active(), true);
+    assert.equal(s.where({}), "tab");
+    s.styleReads.length = 0;
+    s.toolbarOrder(order);
+    s.resizeSidebar(250);
+    assert.equal(s.styleReads.length, 0);
+    s.setPref("uc.floatingurlbar.compact", true);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), true);
+    s.window.emit("unload");
+    assert.equal(s.preferenceObservers.get("uc.floatingurlbar.compact").size, 0);
+});
+
+test("missing native caption boxes leave compact controls and Ctrl+T working", () => {
+    const s = setup({ compactControls: true, nativeCaptions: true, missingCaptionBox: true,
+        prefs: { "uc.floatingurlbar.compact": true } });
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), true);
+    assert.equal(s.widget("caption-nav-bar").hasAttribute("floatingurlbar-compact-caption"), false);
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-caption-offset"), "0px");
+    s.resizeSidebar(250);
+    s.ctrlT();
+    assert.equal(s.where({}), "tab");
+    s.window.emit("unload");
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), false);
+});
+
+test("compact geometry follows CSS metrics and leaves an unavailable stylesheet native", () => {
+    const s = setup({ compactControls: true, compactStep: "44px", compactInputHeight: "40px",
+        prefs: { "uc.floatingurlbar.compact": true } });
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "92px");
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "140px");
+    s.resizeSidebar(250);
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "48px");
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "96px");
+    const unavailable = setup({ compactControls: true, compactStep: "", compactInputHeight: "",
+        prefs: { "uc.floatingurlbar.compact": true } });
+    assert.equal(unavailable.toolbox.hasAttribute("floatingurlbar-compact-ready"), false);
+    unavailable.ctrlT();
+    assert.equal(unavailable.where({}), "tab");
+});
+
 test("compact captions use the native active instance and fall back when it cannot fit", () => {
     const s = setup({ compactControls: true, nativeCaptions: true,
         prefs: { "uc.floatingurlbar.compact": true } });
@@ -1717,7 +1804,8 @@ test("compact captions use the native active instance and fall back when it cann
     s.window.emit("unload");
     assert.equal(nav.hasAttribute(attr), false);
     assert.equal(offset(), "");
-    const mac = setup({ compactControls: true, nativeCaptions: true, platform: "Darwin" });
+    const mac = setup({ compactControls: true, nativeCaptions: true, platform: "Darwin",
+        prefs: { "uc.floatingurlbar.compact": true } });
     assert.equal(mac.widget("caption-nav-bar").hasAttribute(attr), false);
     assert.equal(mac.root.style.getPropertyValue("--floatingurlbar-compact-caption-offset"), "0px");
 });
@@ -2080,8 +2168,8 @@ test("native overflow never occupies the compact header, even with the obsolete 
             assert.equal(button.hasAttribute("floatingurlbar-compact-control"), false);
             assert.equal(button.style.getPropertyValue("--floatingurlbar-compact-column"), "");
             assert.equal(button.style.getPropertyValue("display"), "");
-            assert.equal(s.widget("back-button").style.getPropertyValue("--floatingurlbar-compact-column"), "1");
-            assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "80px");
+            assert.equal(s.widget("back-button").style.getPropertyValue("--floatingurlbar-compact-column"), compact ? "1" : "");
+            assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), compact ? "80px" : "");
         }
     }
 });
@@ -2119,7 +2207,7 @@ test("compact header gaps open the native toolbar menu without replacing other c
 });
 
 test("compact controls follow customization and include pinned extensions after the field", () => {
-    const s = setup({ compactControls: true });
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
     const attr = "floatingurlbar-compact-control";
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), true);
     assert.equal(s.widget("downloads-button").hasAttribute(attr), false);
@@ -2143,7 +2231,7 @@ test("compact controls follow customization and include pinned extensions after 
 });
 
 test("Extensions defaults to the left and honors a customized position before the field", () => {
-    const s = setup({ compactControls: true });
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
     const attr = "floatingurlbar-compact-control";
     const button = s.widget("unified-extensions-button");
     s.resizeSidebar(234);
@@ -2175,7 +2263,7 @@ test("Extensions defaults to the left and honors a customized position before th
 });
 
 test("compact placeholder follows Firefox localization and refocuses without resetting a query", () => {
-    const s = setup({ compactControls: true });
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
     const placeholder = s.widget("floatingurlbar-sidebar-placeholder");
     assert.equal(placeholder.textContent, s.input.placeholder);
     s.input.placeholder = "Rechercher avec Google ou saisir une adresse";
@@ -2197,7 +2285,7 @@ test("compact placeholder follows Firefox localization and refocuses without res
 });
 
 test("compact placeholder detaches from the bar on unload", () => {
-    const s = setup({ compactControls: true });
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
     const placeholder = s.widget("floatingurlbar-sidebar-placeholder");
     assert.equal(s.bar.contains(placeholder), true);
     s.window.emit("unload");
@@ -2213,7 +2301,7 @@ test("removed input is no longer contained by the bar", () => {
 });
 
 test("compact controls resize, respect native hidden buttons, and clean up on unload", () => {
-    const s = setup({ compactControls: true });
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
     const order = ["downloads-button", "fixture-browser-action", "back-button", "forward-button",
         "stop-reload-button", "urlbar-container"];
     s.toolbarOrder(order);

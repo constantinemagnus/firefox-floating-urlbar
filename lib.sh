@@ -298,6 +298,51 @@ copy_with_backup() {
     echo "  installed $(basename "$dest")"
 }
 
+# Stage the matching script/style pair before replacing either live file.
+install_payloads() (
+    local source_dir="$1" profile="$2" staging file dest i j
+    local files=(JS/replace-new-tab.uc.js CSS/firefox-floating-urlbar.uc.css)
+    local backups=("" "") applied=()
+    require_profile_destinations "$profile"
+    staging="$(mktemp -d "$profile/chrome/.floating-urlbar-install.XXXXXX")" || return 1
+    trap 'rm -rf -- "$staging"' EXIT
+
+    for i in "${!files[@]}"; do
+        file="${files[$i]}"; dest="$profile/chrome/$file"
+        if [[ -f "$dest" ]] && cmp -s "$source_dir/$file" "$dest"; then continue; fi
+        mkdir -p "$staging/${file%/*}" || return 1
+        if [[ -f "$dest" ]]; then cp -p -- "$dest" "$staging/$file" || return 1; fi
+        cp -- "$source_dir/$file" "$staging/$file" || return 1
+    done
+    for i in "${!files[@]}"; do
+        file="${files[$i]}"; dest="$profile/chrome/$file"
+        if [[ -f "$staging/$file" && -f "$dest" ]]; then
+            backups[i]="$(backup_file "$dest")" || return 1
+            echo "  Backed up existing file to: $(basename "${backups[$i]}")"
+        fi
+    done
+    for i in "${!files[@]}"; do
+        file="${files[$i]}"; dest="$profile/chrome/$file"
+        [[ -f "$staging/$file" ]] || continue
+        applied+=("$i")
+        if ! (require_profile_destinations "$profile") || ! mv -f -- "$staging/$file" "$dest"; then
+            warn "Payload installation failed; restoring the previous files."
+            for (( j=${#applied[@]}-1; j>=0; j-- )); do
+                i="${applied[$j]}"; dest="$profile/chrome/${files[$i]}"
+                if ! (require_profile_destinations "$profile"); then
+                    warn "Cannot restore $dest; backup: ${backups[$i]:-no previous file}"
+                elif [[ -n "${backups[$i]}" ]]; then
+                    mv -f -- "${backups[$i]}" "$dest" || warn "Restore failed; recover $dest from ${backups[$i]}"
+                else
+                    rm -f -- "$dest" || warn "Could not remove incomplete payload: $dest"
+                fi
+            done
+            return 1
+        fi
+        echo "  installed $(basename "$dest")"
+    done
+)
+
 # Only remove a cache directly inside the physically resolved profile. External
 # local-data paths cannot be identified safely from the profile basename.
 # about:support > "Clear startup cache" handles those locations.

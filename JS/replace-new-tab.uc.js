@@ -299,6 +299,10 @@
          }
          navigationContext = context;
          try {
+              if (name === "openSearchEnginePage" && context.newTab && args[1]) {
+                  // Engine-menu actions supply a destination without a lookup.
+                  args[1] = { ...args[1], where: redirectCurrentToTab(args[1].where, context.reuseEmpty) };
+              }
              return original.apply(this, args);
          } finally {
              if (name === "pickResult" && context.session?.pendingNavigation === context) {
@@ -897,7 +901,6 @@
              if (event.button === 0) event.preventDefault();
          });
          placeholder.addEventListener("click", () => urlbarInput.focus());
-         urlbar.appendChild(placeholder);
          const controlAttr = "floatingurlbar-compact-control";
          const compactReadyAttr = "floatingurlbar-compact-ready";
          const columnProp = "--floatingurlbar-compact-column";
@@ -928,13 +931,23 @@
              toolbox.removeAttribute(compactReadyAttr);
          };
          const syncControls = () => {
-             if (!isEnabled()) {
+             if (!compactEnabled()) {
                  forgetReveal();
                  releaseToolboxPress();
                  toolbox.removeAttribute(nativeFocusAttr);
                  clearControls();
+                 placeholder.remove();
+                 urlbar.removeAttribute(SIDEBAR_EDIT_ATTR);
                  return;
              }
+             const style = window.getComputedStyle(document.documentElement);
+             const step = Number.parseFloat(style.getPropertyValue("--floatingurlbar-compact-step"));
+             const inputHeight = Number.parseFloat(style.getPropertyValue("--floatingurlbar-compact-input-height"));
+             if (!(step > 0 && inputHeight > 0)) {
+                 clearControls();
+                 return;
+             }
+             if (!urlbar.contains(placeholder)) urlbar.appendChild(placeholder);
              if (!compactLayoutActive()) {
                  forgetReveal();
              }
@@ -972,7 +985,8 @@
              let caption = null;
              if ((Services.appinfo.OS === "Linux" || Services.appinfo.OS === "WINNT") &&
                  document.documentElement.hasAttribute("customtitlebar")) {
-                 caption = captions.find(node => window.getComputedStyle(node).display !== "none" &&
+                 caption = captions.find(node => node.querySelector(".titlebar-buttonbox") &&
+                     window.getComputedStyle(node).display !== "none" &&
                      node.parentElement.getBoundingClientRect().height > 0);
                  const width = caption?.querySelector(".titlebar-buttonbox").getBoundingClientRect().width;
                  if (!(width > 0 && width + 16 <= sidebar.clientWidth)) {
@@ -983,10 +997,10 @@
                  if (node === caption) node.setAttribute(captionAttr, "");
                  else node.removeAttribute(captionAttr);
              }
-             const captionOffset = caption ? Math.max(36,
+             const captionOffset = caption ? Math.max(step,
                  Math.ceil(caption.querySelector(".titlebar-buttonbox").getBoundingClientRect().height) + 4) : 0;
              setProperty(document.documentElement, captionOffsetProp, `${captionOffset}px`);
-             const columns = Math.max(1, Math.floor((sidebar.clientWidth - 12) / 36));
+             const columns = Math.max(1, Math.floor((sidebar.clientWidth - 12) / step));
              let index = 1; // The permanent menu button occupies the first slot.
              for (const node of next) {
                  node.setAttribute(controlAttr, "");
@@ -994,29 +1008,12 @@
                  setProperty(node, rowProp, String(Math.floor(index / columns)));
                  index++;
              }
-             const inputTop = 4 + captionOffset + Math.ceil(index / columns) * 36;
+             const inputTop = 4 + captionOffset + Math.ceil(index / columns) * step;
              setProperty(document.documentElement, inputTopProp, `${inputTop}px`);
-             setProperty(document.documentElement, headerHeightProp, `${inputTop + 40}px`);
+             setProperty(document.documentElement, headerHeightProp, `${inputTop + inputHeight + 8}px`);
              controls = next;
              toolbox.setAttribute(compactReadyAttr, "");
          };
-         const widgetsObserver = new MutationObserver(syncControls);
-         widgetsObserver.observe(target, {
-             childList: true, subtree: true, attributes: true,
-             attributeFilter: ["hidden", "collapsed", "placeholder"]
-         });
-         widgetsObserver.observe(toolbox, {
-             attributes: true, subtree: true,
-             attributeFilter: ["inactive", "autohide", "tabs-hidden"]
-         });
-         widgetsObserver.observe(document.documentElement, {
-             attributes: true, attributeFilter: ["customtitlebar", "sizemode", "customizing", "inDOMFullscreen"]
-         });
-         const sidebarObserver = new window.ResizeObserver(syncControls);
-         sidebarObserver.observe(sidebar);
-         for (const node of captions) {
-             sidebarObserver.observe(node.querySelector(".titlebar-buttonbox"));
-         }
          // Native window dragging makes Firefox report a spurious pointer
          // leave, so pin the revealed toolbar from press until release.
          const pressAttr = "floatingurlbar-compact-press";
@@ -1163,13 +1160,33 @@
                  forgetReveal();
              }
          };
+         const widgetsObserver = new MutationObserver(syncControls);
+         widgetsObserver.observe(target, {
+             childList: true, subtree: true, attributes: true,
+             attributeFilter: ["hidden", "collapsed", "placeholder"]
+         });
+         widgetsObserver.observe(toolbox, {
+             attributes: true, subtree: true,
+             attributeFilter: ["inactive", "autohide", "tabs-hidden"]
+         });
+         widgetsObserver.observe(document.documentElement, {
+             attributes: true, attributeFilter: ["customtitlebar", "sizemode", "customizing", "inDOMFullscreen"]
+         });
+         const sidebarObserver = new window.ResizeObserver(syncControls);
+         sidebarObserver.observe(sidebar);
+         for (const node of captions) {
+             const box = node.querySelector(".titlebar-buttonbox");
+             if (box) sidebarObserver.observe(box);
+         }
          syncControls();
          Services.prefs.addObserver(PREF_ENABLED, syncControls);
+         Services.prefs.addObserver(PREF_COMPACT, syncControls);
          toolbox.addEventListener("mousemove", onRevealMove, true);
          toolbox.addEventListener("mouseleave", onRevealLeave, true);
          window.addEventListener("blur", onRevealBlur, true);
          window.addEventListener("unload", () => {
              Services.prefs.removeObserver(PREF_ENABLED, syncControls);
+             Services.prefs.removeObserver(PREF_COMPACT, syncControls);
              widgetsObserver.disconnect();
              sidebarObserver.disconnect();
              placeholder.remove();

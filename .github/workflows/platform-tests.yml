@@ -13,6 +13,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Syntax and regression checks
+        run: |
+          node --check JS/replace-new-tab.uc.js
+          bash -n install.sh update.sh uninstall.sh lib.sh autoconfig.sh install-remote.sh tests/*.sh
+          bash tests/run.sh
+
   macos:
     name: macOS (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}

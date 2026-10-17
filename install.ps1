@@ -29,15 +29,68 @@ function Assert-Destination([string]$Path, [switch]$Directory) {
     }
 }
 
+function Backup-File([string]$Path) {
+    Assert-Destination $Path
+    $backup = "$Path.bak-$(Get-Date -Format yyyyMMddHHmmss)-$([Guid]::NewGuid().ToString('N'))"
+    Copy-Item -LiteralPath $Path -Destination $backup
+    Write-Host "  Backed up $Path to $backup"
+    return $backup
+}
+
 function Copy-WithBackup([string]$Source, [string]$Destination) {
     Assert-Destination $Destination
     if ((Test-Path -LiteralPath $Destination) -and
         (Get-FileHash -LiteralPath $Source).Hash -ne (Get-FileHash -LiteralPath $Destination).Hash) {
-        $backup = "$Destination.bak-$(Get-Date -Format yyyyMMddHHmmss)-$([Guid]::NewGuid().ToString('N'))"
-        Copy-Item -LiteralPath $Destination -Destination $backup
-        Write-Host "  Backed up $Destination to $backup"
+        $null = Backup-File $Destination
     }
     Copy-Item -LiteralPath $Source -Destination $Destination
+}
+
+function Install-Payloads([string]$SelectedProfile, [Collections.IDictionary]$Payloads) {
+    foreach ($path in @('chrome', 'chrome/JS', 'chrome/CSS')) {
+        Assert-Destination (Join-Path $SelectedProfile $path) -Directory
+    }
+    $staging = Join-Path $SelectedProfile "chrome/.floating-urlbar-install.$([Guid]::NewGuid().ToString('N'))"
+    [IO.Directory]::CreateDirectory($staging) | Out-Null
+    $entries = @()
+    $applied = @()
+    try {
+        foreach ($source in $Payloads.Keys) {
+            $destination = Join-Path $SelectedProfile $Payloads[$source]
+            Assert-Destination $destination
+            $sourcePath = Join-Path $PSScriptRoot $source
+            if ((Test-Path -LiteralPath $destination) -and
+                (Get-FileHash -LiteralPath $sourcePath).Hash -eq (Get-FileHash -LiteralPath $destination).Hash) { continue }
+            $staged = Join-Path $staging $source
+            [IO.Directory]::CreateDirectory((Split-Path $staged -Parent)) | Out-Null
+            if (Test-Path -LiteralPath $destination) { Copy-Item -LiteralPath $destination -Destination $staged }
+            Copy-Item -LiteralPath $sourcePath -Destination $staged
+            $entries += [pscustomobject]@{ Destination = $destination; Staged = $staged; Backup = '' }
+        }
+        foreach ($entry in $entries) {
+            if (Test-Path -LiteralPath $entry.Destination) { $entry.Backup = Backup-File $entry.Destination }
+        }
+        foreach ($entry in $entries) {
+            Assert-Destination (Join-Path $SelectedProfile 'chrome') -Directory
+            Assert-Destination (Split-Path $entry.Destination -Parent) -Directory
+            Assert-Destination $entry.Destination
+            $applied += $entry
+            Move-Item -LiteralPath $entry.Staged -Destination $entry.Destination -Force
+        }
+    } catch {
+        $failure = $_
+        for ($i = $applied.Count - 1; $i -ge 0; $i--) {
+            $entry = $applied[$i]
+            try {
+                Assert-Destination (Join-Path $SelectedProfile 'chrome') -Directory
+                Assert-Destination (Split-Path $entry.Destination -Parent) -Directory
+                Assert-Destination $entry.Destination
+                if ($entry.Backup) { Move-Item -LiteralPath $entry.Backup -Destination $entry.Destination -Force }
+                elseif (Test-Path -LiteralPath $entry.Destination) { Remove-Item -LiteralPath $entry.Destination }
+            } catch { Write-Warning "Could not restore $($entry.Destination); backup: $($entry.Backup). $($_.Exception.Message)" }
+        }
+        throw $failure
+    } finally { Remove-Item -LiteralPath $staging -Recurse -Force }
 }
 
 function Get-NormalizedProfilePath([string]$Path) {
@@ -349,7 +402,7 @@ function Invoke-FloatingUrlbarInstall {
     foreach ($path in @('chrome', 'chrome/JS', 'chrome/CSS')) {
         Assert-Destination (Join-Path $ProfilePath $path) -Directory
     }
-    $payloads = @{
+    $payloads = [ordered]@{
         'JS/replace-new-tab.uc.js' = 'chrome/JS/replace-new-tab.uc.js'
         'CSS/firefox-floating-urlbar.uc.css' = 'chrome/CSS/firefox-floating-urlbar.uc.css'
     }
@@ -362,17 +415,17 @@ function Invoke-FloatingUrlbarInstall {
         foreach ($path in @('chrome/JS', 'chrome/CSS')) {
             [IO.Directory]::CreateDirectory((Join-Path $ProfilePath $path)) | Out-Null
         }
-    }
-    foreach ($source in $payloads.Keys) {
-        $destination = Join-Path $ProfilePath $payloads[$source]
-        if ($Uninstall) {
+        Install-Payloads $ProfilePath $payloads
+    } else {
+        foreach ($source in $payloads.Keys) {
+            $destination = Join-Path $ProfilePath $payloads[$source]
             if (Test-Path -LiteralPath $destination) {
                 if ((Get-FileHash -LiteralPath $destination).Hash -ne (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $source)).Hash) {
                     Copy-Item -LiteralPath $destination -Destination "$destination.bak-$([Guid]::NewGuid().ToString('N'))"
                 }
                 Remove-Item -LiteralPath $destination
             }
-        } else { Copy-WithBackup (Join-Path $PSScriptRoot $source) $destination }
+        }
     }
     if ($Uninstall) {
         # Match the chooser's folder comparison when clearing saved state.

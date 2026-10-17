@@ -557,6 +557,60 @@ try {
     }
     Assert-That ((Get-Content "$interruptedProfile/chrome/utils/.floating-urlbar-source") -eq 'fixture') 'retry did not finalize loader ownership'
 
+    # Second-payload failures must preserve both files and remembered state.
+    foreach ($state in @('existing', 'fresh')) {
+        foreach ($phase in @('stage', 'backup', 'replace')) {
+            if ($state -eq 'fresh' -and $phase -eq 'backup') { continue }
+            & {
+                $Uninstall = $false
+                $ProfilePath = Join-Path $temp "payload-$state-$phase"
+                foreach ($dir in @('JS', 'CSS', 'utils')) {
+                    [IO.Directory]::CreateDirectory("$ProfilePath/chrome/$dir") | Out-Null
+                }
+                Set-Content "$ProfilePath/prefs.js" 'preserve preferences'
+                Set-Content "$ProfilePath/chrome/utils/boot.sys.mjs" 'external loader'
+                Set-Content "$ProfilePath/chrome/utils/chrome.manifest" 'external manifest'
+                $js = Join-Path $ProfilePath 'chrome/JS/replace-new-tab.uc.js'
+                $css = Join-Path $ProfilePath 'chrome/CSS/firefox-floating-urlbar.uc.css'
+                if ($state -eq 'existing') {
+                    Set-Content -LiteralPath $js -Value 'original JS'
+                    Set-Content -LiteralPath $css -Value 'original CSS'
+                }
+                $remembered = Join-Path $env:APPDATA 'firefox-floating-urlbar/profile'
+                $stateBefore = if (Test-Path -LiteralPath $remembered) { Get-Content -LiteralPath $remembered -Raw } else { $null }
+                function Copy-Item {
+                    [CmdletBinding()]
+                    param([string]$LiteralPath, [string]$Destination, [switch]$Force)
+                    if (($phase -eq 'stage' -and $LiteralPath -eq (Join-Path $repo 'CSS/firefox-floating-urlbar.uc.css')) -or
+                        ($phase -eq 'backup' -and $Destination -like '*firefox-floating-urlbar.uc.css.bak-*')) {
+                        throw 'fixture second-payload copy failure'
+                    }
+                    Microsoft.PowerShell.Management\Copy-Item @PSBoundParameters
+                }
+                function Move-Item {
+                    [CmdletBinding()]
+                    param([string]$LiteralPath, [string]$Destination, [switch]$Force)
+                    if ($phase -eq 'replace' -and $LiteralPath -like '*.floating-urlbar-install.*' -and
+                        (Split-Path $LiteralPath -Leaf) -eq 'firefox-floating-urlbar.uc.css') {
+                        throw 'fixture second-payload replacement failure'
+                    }
+                    Microsoft.PowerShell.Management\Move-Item @PSBoundParameters
+                }
+                Assert-Rejected { Invoke-FloatingUrlbarInstall } "accepted $state payload $phase failure"
+                if ($state -eq 'existing') {
+                    Assert-That ((Get-Content -LiteralPath $js) -eq 'original JS') "$phase did not restore JavaScript"
+                    Assert-That ((Get-Content -LiteralPath $css) -eq 'original CSS') "$phase did not preserve CSS"
+                } else {
+                    Assert-That (-not (Test-Path -LiteralPath $js) -and -not (Test-Path -LiteralPath $css)) "$phase left a partial fresh installation"
+                }
+                $stateAfter = if (Test-Path -LiteralPath $remembered) { Get-Content -LiteralPath $remembered -Raw } else { $null }
+                Assert-That ($stateAfter -eq $stateBefore) "$phase changed remembered state"
+                Assert-That (@(Get-ChildItem -LiteralPath "$ProfilePath/chrome" -Directory -Force |
+                    Where-Object Name -Like '.floating-urlbar-install.*').Count -eq 0) "$phase leaked staged files"
+            }
+        }
+    }
+
     # Remote launcher: forward options, discard stale status, and clean up on failure.
     $remoteFixture = Join-Path $temp 'remote-fixture/firefox-floating-urlbar-main'
     [IO.Directory]::CreateDirectory($remoteFixture) | Out-Null
