@@ -348,9 +348,11 @@
  if (typeof gURLBar.setURI === "function") {
      const original = gURLBar.setURI;
      gURLBar.setURI = function (...args) {
-         // A previous page can finish loading while Ctrl+T edits its next destination.
          const update = args[0];
-         if (editingSession?.newTab && (update?.uri || update?.spec) &&
+         // Location notifications include session-restore state; formatter updates do not.
+         const isLocationChange = update?.uri
+             ? "dueToSessionRestore" in update : update?.spec && args.length >= 3;
+         if (editingSession && isLocationChange &&
              !update.dueToTabSwitch && !args[1]) {
              return;
          }

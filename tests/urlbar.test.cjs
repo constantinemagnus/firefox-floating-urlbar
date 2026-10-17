@@ -734,7 +734,7 @@ test("late location updates cannot replace a fresh Ctrl+T query after blank-tab 
     s.ctrlT(); s.type("https://previous.example/");
     s.gURLBar.handleCommand(s.key("Enter"));
     assert.equal(s.loads[0].options.where, "current");
-    const update = { uri: { spec: "https://previous.example/" } };
+    const update = { uri: { spec: "https://previous.example/" }, dueToTabSwitch: false, dueToSessionRestore: false };
     assert.equal(s.gURLBar.setURI(update), "native update");
     s.browser.selectedTab.isEmpty = false;
     s.ctrlT();
@@ -747,7 +747,7 @@ test("late location updates cannot replace a fresh Ctrl+T query after blank-tab 
     s.input.selectionStart = 2;
     s.input.selectionEnd = 5;
     s.gURLBar.searchMode = { engineName: "Selected" };
-    s.gURLBar.setURI(update.uri); // Older Firefox passes the URI directly.
+    s.gURLBar.setURI(update.uri, false, false); // Older Firefox passes location state positionally.
     assert.equal(s.input.value, "youtube");
     assert.equal(s.gURLBar.untrimmedValue, "youtube");
     assert.equal(s.gURLBar.userTypedValue, "youtube");
@@ -760,27 +760,65 @@ test("late location updates cannot replace a fresh Ctrl+T query after blank-tab 
     assert.equal(s.gURLBar.setURI(update), "native update");
 });
 
-test("Ctrl+T leaves native URI reverts, tab switches and other shortcuts intact", () => {
-    const calls = [];
-    const s = setup({ configureUrlbar(bar) {
-        bar.setURI = function (...args) { calls.push({ receiver: this, args }); return "native update"; };
-    } });
-    s.ctrlT();
-    for (const args of [[], [null, true], [{ hideSearchTerms: true }],
-        [{ uri: { spec: "https://other.example/" }, dueToTabSwitch: true }],
-        [{ spec: "https://other.example/" }, true]]) {
+test("redirects cannot replace Ctrl+L or Ctrl+K edits before submission or cancellation", () => {
+    for (const shortcut of ["l", "k"]) for (const legacy of [false, true]) for (const submit of [false, true]) {
+        let updates = 0;
+        const s = setup({ configureUrlbar(bar) {
+            bar.setURI = function () { updates++; this.setValue("https://redirect.example/"); return "native update"; };
+        } });
+        const uri = { spec: "https://redirect.example/" };
+        const args = legacy ? [uri, false, false]
+            : [{ uri, dueToTabSwitch: false, dueToSessionRestore: false }];
+        s.key(shortcut, { ctrlKey: true }, () => shortcut === "k" ? s.gURLBar.searchModeShortcut() : s.input.focus());
+        s.type("unfinished query");
+        s.input.selectionStart = 2;
+        s.input.selectionEnd = 5;
+        s.gURLBar.userTypedValue = null; // A page redirect clears Firefox's stored typed value.
+        const searchMode = s.gURLBar.searchMode;
+        assert.equal(s.gURLBar.setURI(...args), undefined);
+        assert.equal(updates, 0);
+        assert.equal(s.input.value, "unfinished query");
+        assert.equal(s.gURLBar.untrimmedValue, "unfinished query");
+        assert.deepEqual([s.input.selectionStart, s.input.selectionEnd], [2, 5]);
+        assert.equal(s.gURLBar.searchMode, searchMode);
+        assert.equal(s.active(), true);
+        if (submit) {
+            s.gURLBar.handleCommand(s.key("Enter"));
+            assert.equal(s.loads[0].options.where, "current");
+            assert.equal(s.loads[0].options.loadRequest.urlLoad.url, "unfinished query");
+        } else {
+            s.key("Escape");
+            assert.equal(s.input.value, s.browser.selectedBrowser.currentURI.spec);
+        }
+        assert.equal(s.active(), false);
         assert.equal(s.gURLBar.setURI(...args), "native update");
-        assert.equal(calls.at(-1).receiver, s.gURLBar);
-        assert.deepEqual(calls.at(-1).args, args);
+        assert.equal(updates, 1);
     }
-    s.browser.tabContainer.emit("TabSelect");
-    const update = { uri: { spec: "https://other.example/" } };
-    assert.equal(s.gURLBar.setURI(update), "native update");
-    s.key("l", { ctrlKey: true });
-    assert.equal(s.gURLBar.setURI(update), "native update");
-    s.ctrlT();
-    s.setPref("uc.floatingurlbar.enabled", false);
-    assert.equal(s.gURLBar.setURI(update), "native update");
+});
+
+test("floating flows leave native URI formatting, reverts and tab switches intact", () => {
+    for (const shortcut of ["t", "l", "k"]) {
+        const calls = [];
+        const s = setup({ configureUrlbar(bar) {
+            bar.setURI = function (...args) { calls.push({ receiver: this, args }); return "native update"; };
+        } });
+        const start = () => shortcut === "t" ? s.ctrlT() : s.key(shortcut, { ctrlKey: true }, () => s.input.focus());
+        start();
+        const uri = { spec: "https://other.example/" };
+        for (const args of [[], [null, true], [{ hideSearchTerms: true }],
+            [{ uri }], [{ uri, isSameDocument: true }], [uri], [uri, false],
+            [{ uri, dueToTabSwitch: true, dueToSessionRestore: false }], [uri, true, false]]) {
+            assert.equal(s.gURLBar.setURI(...args), "native update");
+            assert.equal(calls.at(-1).receiver, s.gURLBar);
+            assert.deepEqual(calls.at(-1).args, args);
+        }
+        const update = { uri, dueToTabSwitch: false, dueToSessionRestore: false };
+        s.browser.tabContainer.emit("TabSelect");
+        assert.equal(s.gURLBar.setURI(update), "native update");
+        start();
+        s.setPref("uc.floatingurlbar.enabled", false);
+        assert.equal(s.gURLBar.setURI(update), "native update");
+    }
 });
 
 test("blank-tab submission commits without cancellation reverting the pending value", () => {

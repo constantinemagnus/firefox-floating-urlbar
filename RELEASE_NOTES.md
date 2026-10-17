@@ -1,11 +1,8 @@
-# v1.4.1 — Compact mode fixes
+# v1.5.1 — Floating URL bar fixes
 
-- Pinned extensions now join the compact header automatically. The Extensions button defaults to the left, beside the menu.
-- The compact address field shows Firefox's localized search/address placeholder while the centered bar is open. Clicking it refocuses the floating input without losing the query.
-- Popup corners follow the input's painted height, keeping the focus outline rounded. Focus colors and transparency remain controlled by the user's Firefox theme.
-- The revealed toolbar uses Firefox's themed background instead of appearing transparent.
-- Toolbar hover now requires a stationary pointer for 200 ms within the top 3 pixels. Hiding keeps a 300 ms grace period, pressing holds the toolbar open, and leaving compact layout clears stale hover state.
-- Uninstall offers profile selection and suggests the last installed profile. Windows recognizes alternate spellings of the same profile when selecting it and clearing the saved choice.
-- GitHub Actions runs isolated installer and filesystem regressions on Windows and macOS, including Intel and Apple Silicon.
+- Page redirects no longer replace unfinished Ctrl+L or Ctrl+K queries, including when suggestions are disabled.
+- Firefox's safety formatter can normalize addresses after focus leaves the floating bar. Native URI reverts and tab switches still pass through.
 
 After updating, restart Firefox and clear the startup cache through `about:support` if needed. Existing preferences remain unchanged.
+
+Validation: 95 mocked URL-bar tests, shell/installer regressions, JavaScript syntax, and whitespace checks passed. Headless Firefox 158 checks and user-reported manual checks on Arch Linux with KDE Plasma 6.8 and Firefox 158 passed. Windows and macOS Firefox UI behavior remains unverified.
