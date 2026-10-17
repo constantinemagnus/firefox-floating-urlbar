@@ -69,7 +69,7 @@ Options: `--profile /path/to/profile`, `--root DIR`, `--firefox-dir /path/to/fir
 
 ### Windows
 
-Local installation was verified in earlier releases; the new rollback behavior, remote network installation, and UAC prompts still need manual testing.
+Offline installer regressions, including rollback, pass on Windows PowerShell 5.1/7 in CI. Remote network installation and UAC prompts still need manual testing.
 
 One-command:
 

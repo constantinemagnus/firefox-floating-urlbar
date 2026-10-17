@@ -9,6 +9,6 @@
 
 After updating, restart Firefox and clear the startup cache through `about:support` if needed. Existing preferences remain unchanged.
 
-Validation: 99 mocked URL-bar tests, shell/installer regressions, JavaScript and shell syntax, ShellCheck, and whitespace checks passed. Maintainer-reported live Firefox navigation and keyboard checks passed; formatting preserves the JavaScript syntax tree.
+Validation: 99 mocked URL-bar tests, shell/installer regressions, JavaScript and shell syntax, ShellCheck, and whitespace checks passed. Hosted installer checks passed on Linux, Windows PowerShell 5.1/7, and macOS Intel/Apple Silicon. Maintainer-reported live Firefox navigation and keyboard checks passed; formatting preserves the JavaScript syntax tree.
 
-The new Windows rollback behavior and native macOS installation still need confirmation. Windows/macOS Firefox UI, Windows remote installation, and UAC prompts remain unverified. Force-killing an installer between file replacements can still require manual recovery from backups.
+Windows/macOS Firefox UI, Windows remote installation, and UAC prompts remain unverified. Force-killing an installer between file replacements can still require manual recovery from backups.
