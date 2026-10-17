@@ -193,11 +193,12 @@ To debug, set `uc.floatingurlbar.debug` to `true` in `about:config`, restart Fir
 ## Development checks
 
 ```bash
-node --test tests/urlbar.test.cjs
-bash tests/shell.test.sh
+bash tests/run.sh
 pwsh -NoProfile -File tests/powershell.test.ps1
 bash tests/macos.test.sh # native macOS only
 ```
+
+The Node.js and shell runner prints counts, duration, and exit status on success, and full output on failure. It stops at the first failed suite and returns its exit code. Each run keeps the original output in the printed temporary log paths. Shell tests report one suite because their assertions have no individual case counter. For live, verbose output, run `node --test tests/urlbar.test.cjs` or `bash tests/shell.test.sh` directly.
 
 The [platform workflow](.github/workflows/platform-tests.yml) checks Windows PowerShell 5.1/7 and macOS Intel/Apple Silicon. Installer tests use temporary profiles and offline fixtures; JavaScript tests mock Firefox. No real profiles are changed.
 

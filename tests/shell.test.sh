@@ -362,6 +362,59 @@ fi
 if grep -Eq '^(merge |--no-pager )' "$TEST_GIT_TRACE"; then fail "ahead branch previewed or merged older upstream"; fi
 grep -q 'ahead of upstream.*install.sh' "$TEST_DIR/ahead.log" || fail "ahead branch guidance missing"
 
+# The concise runner must retain both streams and each failing command's status.
+runner_fixture="$TEST_DIR/runner fixture"
+mkdir -p "$runner_fixture/tests" "$runner_fixture/bin" "$runner_fixture/logs"
+cp "$REPO_DIR/tests/run.sh" "$runner_fixture/tests/"
+cat > "$runner_fixture/bin/node" <<'NODE'
+#!/usr/bin/env bash
+printf 'ok 1 - verbose node case\n# tests 1\n# pass 1\n# fail 0\n# duration_ms 1.25\n'
+printf 'node stderr diagnostic\n    at example (fixture.js:1:2)\n' >&2
+exit "${RUNNER_NODE_EXIT:-0}"
+NODE
+cat > "$runner_fixture/tests/shell.test.sh" <<'SHELL'
+printf 'verbose shell case\n'
+printf 'shell stderr diagnostic\n' >&2
+exit "${RUNNER_SHELL_EXIT:-0}"
+SHELL
+chmod +x "$runner_fixture/bin/node"
+for scenario in pass node-failure shell-failure; do
+    node_exit=0 shell_exit=0 expected_status=0
+    case "$scenario" in
+        node-failure) node_exit=23 expected_status=23 ;;
+        shell-failure) shell_exit=37 expected_status=37 ;;
+    esac
+    runner_status=0
+    PATH="$runner_fixture/bin:$PATH" TMPDIR="$runner_fixture/logs" \
+        RUNNER_NODE_EXIT="$node_exit" RUNNER_SHELL_EXIT="$shell_exit" \
+        bash "$runner_fixture/tests/run.sh" > "$TEST_DIR/runner.log" 2>&1 || runner_status=$?
+    [[ "$runner_status" == "$expected_status" ]] || fail "runner changed $scenario exit code"
+    grep -Eq "duration=[0-9]+s exit=$expected_status output=" "$TEST_DIR/runner.log" || fail "runner summary missing"
+    while IFS= read -r summary; do
+        original_log="${summary#*output=}"
+        [[ -f "$original_log" ]] || fail 'runner original log missing'
+        grep -q 'stderr diagnostic' "$original_log" || fail 'runner lost stderr'
+        grep -q 'verbose .* case' "$original_log" || fail 'runner lost stdout'
+    done < <(sed -n '/output=/p' "$TEST_DIR/runner.log")
+    if [[ "$scenario" == pass ]]; then
+        grep -q '^# tests 1$' "$TEST_DIR/runner.log" || fail 'runner lost Node totals'
+        grep -q '^# duration_ms 1.25$' "$TEST_DIR/runner.log" || fail 'runner lost Node duration'
+        grep -q '^Shell suites: 1 passed$' "$TEST_DIR/runner.log" || fail 'runner lost shell count'
+        if grep -Eq 'verbose|stderr diagnostic' "$TEST_DIR/runner.log"; then fail 'runner printed successful cases'; fi
+    else
+        failing_suite=node
+        [[ "$scenario" == node-failure ]] || failing_suite=shell
+        original_log="$(sed -n "s/^$failing_suite: .*output=//p" "$TEST_DIR/runner.log")"
+        diagnostics="$(cat "$original_log")"
+        runner_output="$(cat "$TEST_DIR/runner.log")"
+        [[ "$runner_output" == *"$diagnostics"* ]] || fail 'runner truncated failure output'
+        if [[ "$scenario" == node-failure ]]; then
+            grep -q 'at example (fixture.js:1:2)' "$TEST_DIR/runner.log" || fail 'runner lost stack trace'
+            if grep -q '^shell:' "$TEST_DIR/runner.log"; then fail 'runner continued after failure'; fi
+        fi
+    fi
+done
+
 echo "Shell regressions passed (temporary profiles and mocked Git; no real profile or repository updated)."
 bash "$REPO_DIR/tests/autoconfig.test.sh"
 bash "$REPO_DIR/tests/remote-install.test.sh"
