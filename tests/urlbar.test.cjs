@@ -1780,6 +1780,32 @@ test("compact menubar keys reveal temporarily without taking over Firefox handli
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-native-focus"), false);
 });
 
+test("compact menubar keys flush visibility before native handling, including held Alt release", () => {
+    for (const fieldFocused of [false, true]) {
+        const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+        if (fieldFocused) s.input.focus();
+        else s.page.focus();
+        s.root.setAttribute("sizemode", "normal"); s.resizeSidebar(180);
+        s.root.setAttribute("sizemode", "maximized"); s.resizeSidebar(180);
+        let frameVisible = false;
+        s.toolbox.getBoundingClientRect = () => {
+            frameVisible = s.toolbox.hasAttribute("floatingurlbar-native-focus");
+            return { width: 1000, height: 40 };
+        };
+        for (const key of ["F10", "Alt"]) {
+            s.key(key, {}, () => assert.equal(frameVisible, true, "native handler needs updated frame visibility"));
+            s.advance(1000);
+            frameVisible = false;
+        }
+        const release = { type: "keyup", key: "Alt" };
+        s.window.emit("keyup", release);
+        assert.equal(frameVisible, true, "Alt release must expose the frame after the keydown hold expires");
+        assert.equal(release.defaultPrevented, undefined);
+        s.advance(0);
+        assert.equal(s.toolbox.hasAttribute("floatingurlbar-native-focus"), false);
+    }
+});
+
 test("compact toolbar presses pin its reveal until release or unload", () => {
     const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
     const attr = "floatingurlbar-compact-press";
@@ -2220,6 +2246,7 @@ test("compact unload removes its menubar hooks and visibility attributes", () =>
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-native-focus"), false);
     s.key("F10");
     s.window.emit("keypress", { key: "Alt" });
+    s.window.emit("keyup", { type: "keyup", key: "Alt" });
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-native-focus"), false);
 });
 

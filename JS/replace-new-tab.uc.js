@@ -892,14 +892,18 @@
         window.CSS.supports("position-visibility: always")) {
         const nativeFocusAttr = "floatingurlbar-native-focus";
         const onToolbarKey = event => {
+            if (event.type === "keyup" && event.key !== "Alt") return;
             if (isEnabled() && Services.prefs.getBoolPref(PREF_COMPACT, false) &&
                 (event.key === "F10" || (event.key === "Alt" && !event.ctrlKey && !event.metaKey))) {
                 toolbox.setAttribute(nativeFocusAttr, "");
+                // Firefox's native menu listener reads frame visibility without flushing styles.
+                toolbox.getBoundingClientRect();
                 setTimeout(() => toolbox.removeAttribute(nativeFocusAttr), 0);
             }
         };
         window.addEventListener("keydown", onToolbarKey, true);
         window.addEventListener("keypress", onToolbarKey, true);
+        window.addEventListener("keyup", onToolbarKey, true);
 
         // Keep Firefox's customization order without moving its widgets out of
         // their native toolbar. Reserve enough sidebar space when buttons wrap.
@@ -1227,6 +1231,7 @@
         window.addEventListener("unload", () => {
             window.removeEventListener("keydown", onToolbarKey, true);
             window.removeEventListener("keypress", onToolbarKey, true);
+            window.removeEventListener("keyup", onToolbarKey, true);
             toolbox.removeAttribute(nativeFocusAttr);
         }, { once: true });
     }
