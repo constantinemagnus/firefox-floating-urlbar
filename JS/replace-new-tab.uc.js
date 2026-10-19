@@ -198,9 +198,7 @@
 
     function currentTabIsEmpty() {
         try {
-            return gBrowser.selectedTab.isEmpty === true ||
-                (typeof window.isBlankPageURL === "function" &&
-                    window.isBlankPageURL(gBrowser.currentURI?.spec));
+            return gBrowser.selectedTab?.isEmpty === true;
         } catch (e) {
             return false;
         }
@@ -299,7 +297,7 @@
             }
             navigationContext = context;
             try {
-                if (name === "openSearchEnginePage" && context.newTab && args[1]) {
+                if (name === "openSearchEnginePage" && context.newTab && args[1]?.where !== undefined) {
                     // Engine-menu actions supply a destination without a lookup.
                     args[1] = { ...args[1], where: redirectCurrentToTab(args[1].where, context.reuseEmpty) };
                 }
@@ -673,6 +671,14 @@
         );
     }
 
+    function trackPopup(popup) {
+        urlbarPopups.add(popup);
+        urlbar.setAttribute(CONTROLS_OPEN_ATTR, "");
+        if (editingSession?.newTab || centeredAtMouseDown || urlbar.matches(CENTERED_SELECTOR)) {
+            urlbar.setAttribute(HOLD_ATTR, "");
+        }
+    }
+
     // Both a hidden menu and a cancelled popupshowing release their tracking.
     // Only the last popup's removal may release the floating bar or cancel edits.
     function untrackPopup(popup) {
@@ -682,6 +688,18 @@
             urlbar.removeAttribute(CONTROLS_OPEN_ATTR);
         }
         return removed && urlbarPopups.size === 0;
+    }
+
+    function cancelPopup(popup) {
+        if (untrackPopup(popup)) {
+            centeredAtMouseDown = false;
+            urlbar.removeAttribute(HOLD_ATTR);
+            if (!urlbar.hasAttribute("focused")) {
+                stopFloating();
+            }
+            // Blur may already have been deferred by this pending popup.
+            scheduleCancellation();
+        }
     }
 
     // Opening a menu can close the results view before the menu appears, so
@@ -784,43 +802,38 @@
             "| belongs to urlbar:", belongsToUrlbar(event.target)
         );
 
-        if (!belongsToUrlbar(event.target)) {
+        const popup = event.target;
+        if (!belongsToUrlbar(popup) &&
+            (!centeredAtMouseDown || popup.anchorNode || popup.triggerNode)) {
             return;
         }
 
-        const popup = event.target;
-        urlbarPopups.add(popup);
+        // An asynchronous menu may not expose its anchor until popupshown.
+        trackPopup(popup);
         pendingPopups.add(popup);
-        urlbar.setAttribute(CONTROLS_OPEN_ATTR, "");
 
-        if (editingSession?.newTab || centeredAtMouseDown || urlbar.matches(CENTERED_SELECTOR)) {
-            urlbar.setAttribute(HOLD_ATTR, "");
-        }
-
-        // Safety net: a popupshowing that gets cancelled never fires popuphidden,
-        // so if this menu hasn't appeared shortly, stop tracking it.
-        setTimeout(() => {
+        // Cancelled popupshowing never fires popuphidden; a slow popup can
+        // legitimately remain showing past the first check.
+        setTimeout(function checkPendingPopup() {
             if (!pendingPopups.has(popup)) {
                 return;
             }
 
-            if (untrackPopup(popup)) {
-                urlbar.removeAttribute(HOLD_ATTR);
-                if (!urlbar.hasAttribute("focused")) {
-                    stopFloating();
-                }
-                // The original blur timer may have fired while this cancelled
-                // popup was still pending. Retry now that it no longer blocks it.
-                scheduleCancellation();
+            if (popup.isConnected !== false && (popup.state === "showing" || popup.state === "open")) {
+                setTimeout(checkPendingPopup, 500);
+                return;
             }
+
+            cancelPopup(popup);
         }, 500);
     }, true);
 
     window.addEventListener("popupshown", event => {
         if (isEnabled() && belongsToUrlbar(event.target)) {
             pendingPopups.delete(event.target);
-            urlbarPopups.add(event.target);
-            urlbar.setAttribute(CONTROLS_OPEN_ATTR, "");
+            trackPopup(event.target);
+        } else {
+            cancelPopup(event.target);
         }
     }, true);
 
@@ -865,6 +878,8 @@
 
     window.addEventListener("unload", () => {
         Services.prefs.removeObserver(PREF_ENABLED, syncEnabled);
+        pendingPopups.clear();
+        urlbarPopups.clear();
         endFlow();
         urlbar.removeAttribute(CONTROLS_OPEN_ATTR);
         observer.disconnect();
@@ -907,6 +922,8 @@
             const rowProp = "--floatingurlbar-compact-row";
             const inputTopProp = "--floatingurlbar-compact-input-top";
             const headerHeightProp = "--floatingurlbar-compact-header-height";
+            const menubarHeightProp = "--floatingurlbar-compact-menubar-height";
+            const menubar = document.getElementById("toolbar-menubar");
             const captionAttr = "floatingurlbar-compact-caption";
             const captionOffsetProp = "--floatingurlbar-compact-caption-offset";
             const captions = [...toolbox.querySelectorAll(".titlebar-buttonbox-container")];
@@ -926,6 +943,7 @@
                 controls.clear();
                 document.documentElement.style.removeProperty(inputTopProp);
                 document.documentElement.style.removeProperty(headerHeightProp);
+                document.documentElement.style.removeProperty(menubarHeightProp);
                 document.documentElement.style.removeProperty(captionOffsetProp);
                 for (const node of captions) node.removeAttribute(captionAttr);
                 toolbox.removeAttribute(compactReadyAttr);
@@ -1000,6 +1018,10 @@
                 const captionOffset = caption ? Math.max(step,
                     Math.ceil(caption.querySelector(".titlebar-buttonbox").getBoundingClientRect().height) + 4) : 0;
                 setProperty(document.documentElement, captionOffsetProp, `${captionOffset}px`);
+                const menubarHeight = menubar && menubar.getAttribute("collapsed") !== "true" &&
+                    (!menubar.hasAttribute("autohide") || menubar.getAttribute("autohide") === "false")
+                    ? Math.ceil(menubar.getBoundingClientRect().height) : 0;
+                setProperty(document.documentElement, menubarHeightProp, `${menubarHeight}px`);
                 const columns = Math.max(1, Math.floor((sidebar.clientWidth - 12) / step));
                 let index = 1; // The permanent menu button occupies the first slot.
                 for (const node of next) {
@@ -1008,7 +1030,7 @@
                     setProperty(node, rowProp, String(Math.floor(index / columns)));
                     index++;
                 }
-                const inputTop = 4 + captionOffset + Math.ceil(index / columns) * step;
+                const inputTop = menubarHeight + 4 + captionOffset + Math.ceil(index / columns) * step;
                 setProperty(document.documentElement, inputTopProp, `${inputTop}px`);
                 setProperty(document.documentElement, headerHeightProp, `${inputTop + inputHeight + 8}px`);
                 controls = next;
@@ -1167,13 +1189,14 @@
             });
             widgetsObserver.observe(toolbox, {
                 attributes: true, subtree: true,
-                attributeFilter: ["inactive", "autohide", "tabs-hidden"]
+                attributeFilter: ["inactive", "autohide", "collapsed", "tabs-hidden"]
             });
             widgetsObserver.observe(document.documentElement, {
                 attributes: true, attributeFilter: ["customtitlebar", "sizemode", "customizing", "inDOMFullscreen"]
             });
             const sidebarObserver = new window.ResizeObserver(syncControls);
             sidebarObserver.observe(sidebar);
+            if (menubar) sidebarObserver.observe(menubar);
             for (const node of captions) {
                 const box = node.querySelector(".titlebar-buttonbox");
                 if (box) sidebarObserver.observe(box);

@@ -703,6 +703,19 @@ test("delayed heuristic replay keeps its destination after cancellation", () => 
     assert.equal(s.where({}), "current");
 });
 
+test("Ctrl+T only reuses tabs Firefox marks empty, even at a blank URL", () => {
+    for (const empty of [false, true, undefined]) {
+        const s = setup();
+        s.browser.selectedTab.isEmpty = empty;
+        s.browser.currentURI = { spec: "about:blank" };
+        s.window.isBlankPageURL = spec => spec === "about:blank";
+        s.ctrlT(); s.type("https://destination.example/");
+        assert.equal(s.where({}), empty === true ? "current" : "tab");
+        s.gURLBar.handleCommand(s.key("Enter"));
+        assert.equal(s.loads[0].options.where, empty === true ? "current" : "tab");
+    }
+});
+
 test("blank-tab reuse stays attached to the original submission", () => {
     const s = setup(); s.browser.selectedTab.isEmpty = true; s.ctrlT();
     const event = {};
@@ -1463,6 +1476,19 @@ test("engine page actions redirect supplied destinations only for nonempty Ctrl+
     }
 });
 
+test("engine page actions preserve an omitted or undefined destination", () => {
+    for (const options of [{ engine: "chosen-engine" }, { engine: "chosen-engine", where: undefined }]) {
+        let received;
+        const s = setup({ configureUrlbar(bar) {
+            bar.openSearchEnginePage = function (query, passed) { received = passed; return "native result"; };
+        } });
+        s.ctrlT();
+        assert.equal(s.gURLBar.openSearchEnginePage("", options), "native result");
+        assert.equal(received, options);
+        assert.equal("where" in received, "where" in options);
+    }
+});
+
 test("cancelled popup cleanup retries a blur cancellation", () => {
     const s = setup(); s.ctrlT();
     s.window.emit("mousedown", { target: s.input });
@@ -1472,6 +1498,106 @@ test("cancelled popup cleanup retries a blur cancellation", () => {
     s.advance(500);
     assert.equal(s.active(), false);
     assert.equal(s.where({}), "current");
+});
+
+test("known foreign popup anchors cannot inherit a centered URL-bar click", () => {
+    for (const property of ["anchorNode", "triggerNode"]) {
+        const s = setup(); s.ctrlT();
+        s.window.emit("mousedown", { target: s.input });
+        s.window.emit("popupshowing", { target: { [property]: s.page } });
+        assert.equal(s.bar.hasAttribute("floatingurlbar-hold"), false);
+        assert.equal(s.bar.hasAttribute("floatingurlbar-controls-open"), false);
+        s.page.focus(); s.advance(1000);
+        assert.equal(s.active(), false);
+    }
+});
+
+test("late popup anchors preserve floating through blur and reconcile ownership", () => {
+    for (const newTab of [false, true]) {
+        for (const belongs of [false, true]) {
+            const s = setup();
+            if (newTab) s.ctrlT();
+            else s.key("l", { ctrlKey: true }, () => s.input.focus());
+            s.type("keep this query");
+            const popup = { state: "showing" };
+            s.window.emit("mousedown", { target: s.input });
+            s.window.emit("popupshowing", { target: popup });
+            s.page.focus(); s.advance(400);
+            assert.equal(s.active(), true);
+            assert.equal(s.bar.hasAttribute("floatingurlbar-hold"), true);
+            popup.anchorNode = belongs ? s.input : s.page;
+            popup.state = "open";
+            s.window.emit("popupshown", { target: popup });
+            s.advance(1000);
+            assert.equal(s.active(), belongs);
+            assert.equal(s.bar.hasAttribute("floatingurlbar-hold"), belongs);
+            assert.equal(s.bar.hasAttribute("floatingurlbar-controls-open"), belongs);
+            assert.equal(s.where({}), belongs && newTab ? "tab" : "current");
+            if (belongs) {
+                assert.equal(s.input.value, "keep this query");
+                s.window.emit("popuphidden", { target: popup }); s.advance(1000);
+                assert.equal(s.active(), false);
+            }
+        }
+    }
+});
+
+test("slow popups keep floating until shown or actually cancelled", () => {
+    for (const shown of [false, true]) {
+        const s = setup(); s.ctrlT(); s.type("slow menu query");
+        const popup = { anchorNode: s.input, state: "showing" };
+        s.window.emit("mousedown", { target: s.input });
+        s.window.emit("popupshowing", { target: popup });
+        s.page.focus(); s.advance(6001);
+        assert.equal(s.active(), true);
+        assert.equal(s.bar.hasAttribute("floatingurlbar-hold"), true);
+        assert.equal(s.bar.hasAttribute("floatingurlbar-controls-open"), true);
+        assert.equal(s.where({}), "tab");
+        if (shown) {
+            popup.state = "open"; s.advance(500);
+            assert.equal(s.active(), true);
+            s.window.emit("popupshown", { target: popup }); s.advance(10000);
+            assert.equal(s.active(), true);
+            assert.equal(s.bar.hasAttribute("floatingurlbar-hold"), true);
+            assert.equal(s.input.value, "slow menu query");
+            s.window.emit("popuphidden", { target: popup });
+        } else {
+            popup.state = "closed";
+        }
+        s.advance(1000);
+        assert.equal(s.active(), false);
+        assert.equal(s.bar.hasAttribute("floatingurlbar-controls-open"), false);
+        assert.equal(s.where({}), "current");
+    }
+});
+
+test("a detached pending popup cannot strand the floating hold", () => {
+    const s = setup(); s.ctrlT();
+    const popup = { anchorNode: s.input, state: "showing", isConnected: true };
+    s.window.emit("popupshowing", { target: popup });
+    s.page.focus(); s.advance(1000);
+    assert.equal(s.active(), true);
+    popup.isConnected = false;
+    s.advance(1000);
+    assert.equal(s.active(), false);
+    assert.equal(s.bar.hasAttribute("floatingurlbar-controls-open"), false);
+    assert.equal(s.where({}), "current");
+});
+
+test("pending popup checks stop after disable or unload", () => {
+    for (const unload of [false, true]) {
+        const s = setup(); s.ctrlT();
+        let stateReads = 0;
+        const popup = { anchorNode: s.input, get state() { stateReads++; return "showing"; } };
+        s.window.emit("popupshowing", { target: popup }); s.advance(500);
+        assert.equal(stateReads, 1);
+        if (unload) s.window.emit("unload");
+        else s.setPref("uc.floatingurlbar.enabled", false);
+        s.advance(10000);
+        assert.equal(stateReads, 1);
+        assert.equal(s.active(), false);
+        assert.equal(s.bar.hasAttribute("floatingurlbar-controls-open"), false);
+    }
 });
 
 test("a visible menu preserves the flow, then Escape dismisses it", () => {
@@ -1869,6 +1995,28 @@ test("compact captions use the native active instance and fall back when it cann
         prefs: { "uc.floatingurlbar.compact": true } });
     assert.equal(mac.widget("caption-nav-bar").hasAttribute(attr), false);
     assert.equal(mac.root.style.getPropertyValue("--floatingurlbar-compact-caption-offset"), "0px");
+});
+
+test("permanent menubars reserve header space without shifting temporary menus", () => {
+    for (const platform of ["Linux", "WINNT"]) {
+        const s = setup({ compactControls: true, nativeCaptions: true, platform,
+            prefs: { "uc.floatingurlbar.compact": true } });
+        const menu = s.widget("toolbar-menubar");
+        menu.rect.height = 28.5;
+        s.resizeSidebar(180);
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "29px");
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "105px");
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "145px");
+        menu.setAttribute("autohide", "true"); s.resizeSidebar(180);
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "0px");
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "76px");
+        menu.setAttribute("autohide", "false"); s.resizeSidebar(180);
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "29px");
+        menu.setAttribute("collapsed", "true"); s.resizeSidebar(180);
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "0px");
+        s.setPref("uc.floatingurlbar.compact", false);
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "");
+    }
 });
 
 test("compact hover uses the CSS strip height in restored and scaled layouts", () => {

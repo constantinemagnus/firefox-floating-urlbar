@@ -297,7 +297,7 @@
                         #navigator-toolbox [floatingurlbar-compact-caption] {
                             position: fixed !important;
                             position-anchor: --floatingurlbar-sidebar;
-                            top: anchor(top) !important;
+                            top: calc(anchor(top) + var(--floatingurlbar-compact-menubar-height, 0px)) !important;
                             left: anchor(left) !important;
                             margin: 0 !important;
                             visibility: visible;
@@ -350,6 +350,15 @@
                     #nav-bar-overflow-button {
                         display: none !important;
                     }
+                    /* Wide widgets stay in the revealed toolbar, opposite the sidebar header. */
+                    #nav-bar-customization-target > :is(#zoom-controls, #edit-controls) {
+                        order: 1;
+                    }
+                    &:has(#sidebar-container[sidebar-positionend]) {
+                        #nav-bar-customization-target > :is(#zoom-controls, #edit-controls) {
+                            order: -1;
+                        }
+                    }
                     #navigator-toolbox[floatingurlbar-compact-ready] {
                         --floatingurlbar-toolbox-dragging: no-drag;
                         position: fixed !important;
@@ -397,6 +406,9 @@
                         transition: none !important;
                     }
                     #navigator-toolbox[floatingurlbar-compact-ready]:has(toolbarbutton[open="true"]:not(#urlbar *)),
+                    #navigator-toolbox[floatingurlbar-compact-ready]:has(
+                        #toolbar-menubar[autohide]:not([autohide="false"], [inactive="true"], [collapsed="true"])
+                    ),
                     #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-native-focus],
                     #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-press],
                     #mainPopupSet:has(> [panelopen]:not(#tab-preview-panel)) ~ #navigator-toolbox[floatingurlbar-compact-ready] {
@@ -404,14 +416,18 @@
                         visibility: visible;
                         transition: none !important;
                     }
-                    /* Give the revealed native menu its own backing above the page. */
-                    #toolbar-menubar[autohide]:not([autohide="false"], [inactive="true"]) {
-                        position: relative;
-                        z-index: 6;
-                        visibility: visible;
-                        background-color: var(--toolbox-background-color, var(--lwt-accent-color, Canvas)) !important;
-                        color: var(--toolbox-text-color, var(--lwt-text-color, CanvasText)) !important;
-                        box-shadow: 0 1px 0 var(--chrome-content-separator-color, currentColor) !important;
+                    /* Give active and permanently enabled menus their own visible backing. */
+                    @media (-moz-platform: windows) or (-moz-platform: linux) {
+                        #toolbar-menubar[autohide]:not([autohide="false"], [inactive="true"]),
+                        #toolbar-menubar:not([autohide], [collapsed="true"]),
+                        #toolbar-menubar[autohide="false"]:not([collapsed="true"]) {
+                            position: relative;
+                            z-index: 6;
+                            visibility: visible;
+                            background-color: var(--toolbox-background-color, var(--lwt-accent-color, Canvas)) !important;
+                            color: var(--toolbox-text-color, var(--lwt-text-color, CanvasText)) !important;
+                            box-shadow: 0 1px 0 var(--chrome-content-separator-color, currentColor) !important;
+                        }
                     }
                     #navigator-toolbox[floatingurlbar-compact-ready] #urlbar {
                         visibility: visible;
@@ -514,7 +530,7 @@
                     :is([floatingurlbar-compact-control], #PanelUI-menu-button) {
                         position: fixed !important;
                         position-anchor: --floatingurlbar-sidebar;
-                        top: calc(anchor(top) + var(--floatingurlbar-compact-caption-offset, 0px) + 4px + var(--floatingurlbar-compact-row, 0) * var(--floatingurlbar-compact-step)) !important;
+                        top: calc(anchor(top) + var(--floatingurlbar-compact-menubar-height, 0px) + var(--floatingurlbar-compact-caption-offset, 0px) + 4px + var(--floatingurlbar-compact-row, 0) * var(--floatingurlbar-compact-step)) !important;
                         left: calc(anchor(left) + 8px + var(--floatingurlbar-compact-column, 0) * var(--floatingurlbar-compact-step)) !important;
                         width: var(--floatingurlbar-compact-button-size) !important;
                         height: var(--floatingurlbar-compact-button-size) !important;

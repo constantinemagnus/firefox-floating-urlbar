@@ -131,14 +131,24 @@ installer=$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firef
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1))) -Uninstall"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm -ErrorAction Stop https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1))) -Uninstall"
 ```
 
 Selects a profile, suggesting the last installed profile when available; use `--profile DIR` or `-ProfilePath DIR` to skip selection. Removes our two files, backs up edited copies, and leaves `prefs.js` untouched.
 
-Interactive uninstall offers to remove fx-autoconfig installed by us; the default is to keep it. For unattended cleanup, use `./uninstall.sh --remove-autoconfig` or `install.ps1 -Uninstall -RemoveAutoconfig`. Cleanup requires ownership records and unchanged loader files, and stops if other scripts or styles depend on the loader. Existing and package-managed loaders are preserved.
+Choose how much to remove; the local and one-command uninstallers accept the same options:
 
-Shared startup files are a separate choice because they affect **all profiles** using that Firefox installation. Remove them only if no other profile or user needs AutoConfig: `./uninstall.sh --remove-shared-autoconfig --firefox-dir DIR`, or `install.ps1 -Uninstall -RemoveSharedAutoconfig -FirefoxDirectory DIR`. These options also remove our profile loader, and only delete startup files recorded as created by us and still unchanged. Other profiles and users cannot be checked automatically. Protected removals request sudo/UAC.
+| Cleanup | Bash options | PowerShell options |
+| --- | --- | --- |
+| Our script and stylesheet; keep fx-autoconfig (default) | None | None |
+| Also remove our profile's fx-autoconfig loader | `--remove-autoconfig` | `-RemoveAutoconfig` |
+| Also remove shared startup files and our profile loader | `--remove-shared-autoconfig --firefox-dir DIR` | `-RemoveSharedAutoconfig -FirefoxDirectory DIR` |
+
+For one-command uninstall, append Bash options after `--uninstall`. Put PowerShell options after `-Uninstall` inside the quoted `-Command` argument.
+
+Interactive uninstall also offers profile-loader removal; the default is to keep it. Cleanup requires ownership records and unchanged files, and stops if other scripts or styles depend on the loader. Existing and package-managed loaders are preserved. Protected removals request sudo/UAC.
+
+Shared startup cleanup affects **all profiles** using that Firefox installation. Use it only if no other profile or user needs AutoConfig; other profiles and users cannot be checked automatically. Only startup files recorded as created by us and still unchanged are removed.
 
 Older installations lack these ownership records. Rerun the current installer to restore a missing or damaged profile receipt against verified upstream files; this requires downloading the pinned fx-autoconfig snapshot again. A failed download leaves the existing profile loader and receipt untouched. Legacy shared startup files remain unowned; missing or damaged shared receipts need manual inspection before removal, after checking other users and profiles. Locally edited loader files are kept.
 
@@ -195,6 +205,7 @@ Collapsed sidebars, horizontal tabs, fullscreen, and toolbar customization use t
 ## Troubleshooting
 
 - Nothing changed after installing: clear the startup cache (`about:support` → **Clear startup cache**) and restart Firefox. Check that fx-autoconfig is installed correctly.
+- The remote installer hits a GitHub API rate limit: use a local checkout or [manual installation](#manual-any-os), or retry after the limit resets.
 - Ctrl+T behaves normally or Enter opens in the current tab: enable debug logging as described below.
 - The bar looks wrong or isn't centered: disable other URL bar customizations that may conflict.
 
@@ -221,9 +232,7 @@ The Node.js and shell runner prints counts, duration, and exit status on success
 
 The [platform workflow](.github/workflows/platform-tests.yml) checks Linux, Windows PowerShell 5.1/7, and macOS Intel/Apple Silicon. Installer tests use temporary profiles and offline fixtures; JavaScript tests mock Firefox. No real profiles are changed.
 
-Before distributing ZIPs, run `bash packaging/build-installers.sh COMMIT_OR_TAG` from a Git checkout. It regenerates `dist/firefox-floating-urlbar.zip`, `.tar.gz`, and `firefox-floating-urlbar-manual.zip` with only the required files and notices, plus `SHA256SUMS` for all three archives. The manual ZIP has `JS/` and `CSS/` directories for the manual installation steps above. Archives contain the selected **committed** revision; uncommitted edits and old local ZIPs are not release inputs. Package tests are skipped when Git metadata is unavailable.
-
-Upload exactly `dist/firefox-floating-urlbar.zip`, `dist/firefox-floating-urlbar.tar.gz`, `dist/firefox-floating-urlbar-manual.zip`, and `dist/SHA256SUMS`. Prepare release notes separately for the selected version; other files already in `dist/` are not regenerated.
+Package tests are skipped when Git metadata is unavailable.
 
 Local Windows tests need Developer Mode or administrator rights for symbolic links. Firefox appearance, keyboard behavior, window dragging, and elevation prompts need manual testing.
 
