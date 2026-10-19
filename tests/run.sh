@@ -17,7 +17,7 @@ run_suite() {
         cat "$LOG_DIR/$name.log"
     else
         # Shell assertions have no case counter; report the suite instead.
-        printf 'Shell suites: 1 passed\n'
+        printf '%s suites: 1 passed\n' "$name"
     fi
     printf '%s: duration=%ss exit=%s output=%s\n' \
         "$name" "$(( SECONDS - started ))" "$status" "$LOG_DIR/$name.log"

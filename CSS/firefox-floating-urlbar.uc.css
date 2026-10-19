@@ -297,8 +297,8 @@
                         #navigator-toolbox [floatingurlbar-compact-caption] {
                             position: fixed !important;
                             position-anchor: --floatingurlbar-sidebar;
-                            top: calc(anchor(top) + 4px) !important;
-                            left: calc(anchor(left) + 8px) !important;
+                            top: anchor(top) !important;
+                            left: anchor(left) !important;
                             margin: 0 !important;
                             visibility: visible;
                             position-visibility: always;
@@ -320,7 +320,7 @@
                         &:has(#sidebar-container[sidebar-positionend]) {
                             #navigator-toolbox [floatingurlbar-compact-caption] {
                                 left: auto !important;
-                                right: calc(anchor(right) + 8px) !important;
+                                right: anchor(right) !important;
                                 .titlebar-buttonbox {
                                     flex-direction: row !important;
                                 }
@@ -351,6 +351,7 @@
                         display: none !important;
                     }
                     #navigator-toolbox[floatingurlbar-compact-ready] {
+                        --floatingurlbar-toolbox-dragging: no-drag;
                         position: fixed !important;
                         top: 0 !important;
                         left: 0 !important;
@@ -366,7 +367,11 @@
                         transform: none !important;
                         opacity: 1 !important;
                         transition: visibility 0s 300ms !important;
-                        -moz-window-dragging: drag;
+                        /* Hidden chrome must not reserve native drag regions over the page. */
+                        -moz-window-dragging: var(--floatingurlbar-toolbox-dragging);
+                    }
+                    #navigator-toolbox[floatingurlbar-compact-ready] > .browser-titlebar {
+                        -moz-window-dragging: var(--floatingurlbar-toolbox-dragging) !important;
                     }
                     #navigator-toolbox[floatingurlbar-compact-ready]::before {
                         content: "";
@@ -387,6 +392,7 @@
                     #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-reveal]:hover:not(:has(
                         :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button, [floatingurlbar-compact-caption]):hover
                     )) {
+                        --floatingurlbar-toolbox-dragging: drag;
                         visibility: visible;
                         transition: none !important;
                     }
@@ -394,6 +400,7 @@
                     #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-native-focus],
                     #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-press],
                     #mainPopupSet:has(> [panelopen]:not(#tab-preview-panel)) ~ #navigator-toolbox[floatingurlbar-compact-ready] {
+                        --floatingurlbar-toolbox-dragging: drag;
                         visibility: visible;
                         transition: none !important;
                     }
@@ -425,7 +432,7 @@
                     #navigator-toolbox[floatingurlbar-compact-ready]:hover:not(:has(
                         :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button, [floatingurlbar-compact-caption]):hover
                     )) :is(#urlbar-container, #urlbar) {
-                        -moz-window-dragging: drag !important;
+                        -moz-window-dragging: var(--floatingurlbar-toolbox-dragging) !important;
                     }
                     #urlbar > :is(.urlbar-input-container, .urlbarView, #urlbar-background, .urlbar-background) {
                         -moz-window-dragging: no-drag !important;

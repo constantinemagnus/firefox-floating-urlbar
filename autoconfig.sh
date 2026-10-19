@@ -107,33 +107,38 @@ install_autoconfig_startup() {
 }
 
 write_autoconfig_receipt() {
-    local receipt="$1" base="$2" file
+    local receipt="$1" base="$2" file hash
     shift 2
     for file in "$@"; do
-        printf '%s %s\n' "$(autoconfig_sha256 "$base/$file")" "$file" || return 1
+        hash="$(autoconfig_sha256 "$base/$file")" || return 1
+        printf '%s %s\n' "$hash" "$file" || return 1
     done > "$receipt"
 }
 
 # Receipts never authorize arbitrary paths, links, or removal of edited files.
 check_autoconfig_receipt() {
-    local receipt="$1" base="$2" allowed="$3" hash file extra seen=" "
+    local receipt="$1" base="$2" allowed="$3" verify="${4:-1}" hash file extra seen=" "
+    local recovery="Reinstall to restore a managed profile receipt using verified upstream files; locally edited files remain protected."
+    if [[ "${receipt##*/}" == .floating-urlbar-autoconfig ]]; then
+        recovery="Shared startup ownership cannot be restored by reinstalling; inspect these files manually after checking other profiles and users."
+    fi
     require_file_destination "$receipt"
-    [[ -f "$receipt" ]] || die "No ownership record for $base; keeping fx-autoconfig."
-    while read -r hash file extra; do
+    [[ -f "$receipt" ]] || die "No ownership record for $base; keeping fx-autoconfig. $recovery"
+    while read -r hash file extra || [[ -n "$hash$file$extra" ]]; do
         file="${file%$'\r'}"
         [[ "$hash" =~ ^[[:xdigit:]]{64}$ && -n "$file" && -z "$extra" && " $allowed " == *" $file "* ]] ||
-            die "Invalid fx-autoconfig ownership record: $receipt"
+            die "Invalid fx-autoconfig ownership record: $receipt. $recovery"
         hash="$(printf '%s' "$hash" | tr 'ABCDEF' 'abcdef')"
         [[ "$seen" != *" $file "* ]] || die "Duplicate fx-autoconfig ownership entry: $file"
         seen="$seen$file "
         require_file_destination "$base/$file"
-        if [[ -f "$base/$file" ]]; then
+        if (( verify )) && [[ -f "$base/$file" ]]; then
             [[ "$(autoconfig_sha256 "$base/$file")" == "$hash" ]] ||
                 die "Locally changed fx-autoconfig file; keeping the loader: $base/$file"
         fi
     done < "$receipt"
     for file in $allowed; do
-        [[ "$seen" == *" $file "* ]] || die "Incomplete fx-autoconfig ownership record: $receipt"
+        [[ "$seen" == *" $file "* ]] || die "Incomplete fx-autoconfig ownership record: $receipt. $recovery"
     done
 }
 
@@ -146,21 +151,11 @@ remove_autoconfig() {
     if [[ -f "$utils/.floating-urlbar-source" ]]; then
         check_autoconfig_receipt "$utils/.floating-urlbar-files" "$utils" "$files"
         owned=1
-    elif (( shared == 0 )); then
-        die "This loader was not installed by us; keeping fx-autoconfig."
     fi
-    # Other customizations may depend on this loader, even after our two files go.
-    local other=""
-    if [[ -d "$profile/chrome" ]]; then
-        other="$(cd -- "$profile/chrome" && find . -path ./utils -prune -o \( -type l -o \
-            \( \( -iname '*.js' -o -iname '*.css' \) ! -path ./userChrome.css ! -path ./userContent.css \) \) -print)" ||
-            die "Cannot inspect other customizations; keeping fx-autoconfig."
-    fi
-    [[ -z "$other" ]] || die "Other customization found; keeping fx-autoconfig: $other"
     for file in "$utils/"* "$utils/".[!.]* "$utils/"..?*; do
         [[ -e "$file" || -L "$file" ]] || continue
         case "${file##*/}" in
-            *.bak-*) require_file_destination "$file"; continue ;;
+            *.bak-*) continue ;;
         esac
         (( owned )) || die "This loader was not installed by us; keeping fx-autoconfig."
         case "${file##*/}" in
@@ -168,9 +163,25 @@ remove_autoconfig() {
         esac
         [[ " $files " == *" ${file##*/} "* ]] || die "Other loader file found; keeping fx-autoconfig: $file"
     done
+    local shared_present=0
     if (( shared )); then
         firefox_dir="$(find_firefox_directory "$profile" "$firefox_dir")"
         for file in "$firefox_dir/defaults" "$firefox_dir/defaults/pref"; do require_directory_destination "$file"; done
+        for file in config.js defaults/pref/config-prefs.js .floating-urlbar-autoconfig; do
+            require_file_destination "$firefox_dir/$file"
+            [[ ! -e "$firefox_dir/$file" ]] || shared_present=1
+        done
+    fi
+    (( owned || shared_present )) || return 0
+    # Other customizations may depend on this loader, even after our two files go.
+    local other=""
+    if [[ -d "$profile/chrome" ]]; then
+        other="$(cd -- "$profile/chrome" && find . -path ./utils -prune -o \( -type l -o \
+            \( -type f \( -iname '*.js' -o -iname '*.css' \) ! -path ./userChrome.css ! -path ./userContent.css \) \) -print)" ||
+            die "Cannot inspect other customizations; keeping fx-autoconfig."
+    fi
+    [[ -z "$other" ]] || die "Other customization found; keeping fx-autoconfig: $other"
+    if (( shared_present )); then
         check_autoconfig_receipt "$firefox_dir/.floating-urlbar-autoconfig" "$firefox_dir" 'config.js defaults/pref/config-prefs.js'
         local elevate=()
         for file in "$firefox_dir" "$firefox_dir/defaults/pref"; do
@@ -193,8 +204,9 @@ remove_autoconfig() {
 ensure_autoconfig() (
     set -e
     local profile="$1" firefox_dir="$2" utils="$1/chrome/utils"
-    local marker="$utils/.floating-urlbar-source" file source download_dir="" link_dir="" packaged=0 complete=1 repair_only=0
+    local marker="$utils/.floating-urlbar-source" file source download_dir="" link_dir="" packaged=0 complete=1 repair_only=0 receipt_complete=0
     local modules=("${AUTOCONFIG_MODULES[@]}")
+    local files="chrome.manifest ${modules[*]} fx-autoconfig.LICENSE fx-autoconfig.txt"
     # Package-backed profiles also need startup validation when reusing their loader.
     if [[ -L "$utils/boot.sys.mjs" && "$(readlink "$utils/boot.sys.mjs")" == /usr/share/fx-autoconfig/utils/boot.sys.mjs ]]; then
         firefox_dir="$(find_firefox_directory "$profile" "$firefox_dir")"
@@ -217,13 +229,15 @@ ensure_autoconfig() (
     require_directory_destination "$profile/chrome/resources"
     require_file_destination "$marker"
     require_file_destination "$utils/.floating-urlbar-files"
+    # Reinstall checks structure; removal still verifies every local file's hash.
+    if (check_autoconfig_receipt "$utils/.floating-urlbar-files" "$utils" "$files" 0) 2>/dev/null; then receipt_complete=1; fi
     for file in chrome.manifest "${modules[@]}"; do
         [[ -f "$utils/$file" ]] || complete=0
     done
     if [[ -f "$marker" && "$(cat "$marker")" == "$AUTOCONFIG_COMMIT" && "$complete" == 1 ]]; then
         firefox_dir="$(find_firefox_directory "$profile" "$firefox_dir")"
         if [[ -f "$firefox_dir/config.js" && -f "$firefox_dir/defaults/pref/config-prefs.js" &&
-              -f "$utils/fx-autoconfig.LICENSE" && -f "$utils/fx-autoconfig.txt" && -f "$utils/.floating-urlbar-files" ]]; then
+              -f "$utils/fx-autoconfig.LICENSE" && -f "$utils/fx-autoconfig.txt" && "$receipt_complete" == 1 ]]; then
             return 0
         fi
         repair_only=1
@@ -233,6 +247,7 @@ ensure_autoconfig() (
     fi
     if [[ -d "$utils" && ! -f "$marker" ]]; then
         for file in "$utils/"* "$utils/".[!.]* "$utils/"..?*; do
+            case "${file##*/}" in *.bak-*) continue ;; esac
             [[ ! -e "$file" && ! -L "$file" ]] || die "Existing incomplete loader in $utils; restore or move it aside before installing."
         done
     fi
@@ -272,11 +287,10 @@ ensure_autoconfig() (
         printf 'fx-autoconfig by MrOtherGuy\nLicense: MPL-2.0 (see fx-autoconfig.LICENSE).\nUnmodified source: https://github.com/MrOtherGuy/fx-autoconfig/tree/%s\n' \
             "$AUTOCONFIG_COMMIT" > "$download_dir/fx-autoconfig.txt" || return 1
         copy_with_backup "$download_dir/fx-autoconfig.txt" "$utils/fx-autoconfig.txt" || return 1
-        if (( repair_only == 0 )) || [[ ! -f "$utils/.floating-urlbar-files" ]]; then
-            write_autoconfig_receipt "$download_dir/owned-files" "$source" chrome.manifest "${modules[@]}" || return 1
-            printf '%s fx-autoconfig.LICENSE\n%s fx-autoconfig.txt\n' \
-                "$(autoconfig_sha256 "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/LICENSE")" \
-                "$(autoconfig_sha256 "$download_dir/fx-autoconfig.txt")" >> "$download_dir/owned-files" || return 1
+        if (( repair_only == 0 || receipt_complete == 0 )); then
+            cp -- "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/LICENSE" "$source/fx-autoconfig.LICENSE" || return 1
+            cp -- "$download_dir/fx-autoconfig.txt" "$source/fx-autoconfig.txt" || return 1
+            write_autoconfig_receipt "$download_dir/owned-files" "$source" $files || return 1
             cp -- "$download_dir/owned-files" "$utils/.floating-urlbar-files" || return 1
         fi
     fi

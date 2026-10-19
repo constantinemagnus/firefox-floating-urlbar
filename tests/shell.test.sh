@@ -473,12 +473,14 @@ for scenario in pass package-skip node-failure shell-failure package-failure; do
     if [[ "$scenario" == pass || "$scenario" == package-skip ]]; then
         grep -q '^# tests 1$' "$TEST_DIR/runner.log" || fail 'runner lost Node totals'
         grep -q '^# duration_ms 1.25$' "$TEST_DIR/runner.log" || fail 'runner lost Node duration'
-        grep -q '^Shell suites: 1 passed$' "$TEST_DIR/runner.log" || fail 'runner lost shell count'
+        grep -q '^shell suites: 1 passed$' "$TEST_DIR/runner.log" || fail 'runner lost shell count'
         if grep -Eq 'verbose|stderr diagnostic' "$TEST_DIR/runner.log"; then fail 'runner printed successful cases'; fi
         if [[ "$scenario" == package-skip ]]; then
             grep -q '^SKIP: fixture package suite requires Git metadata.$' "$TEST_DIR/runner.log" || fail 'runner hid skip reason'
-            [[ "$(grep -c '^Shell suites: 1 passed$' "$TEST_DIR/runner.log")" == 1 ]] || fail 'runner counted a skipped package suite as passed'
+            ! grep -q '^package suites: 1 passed$' "$TEST_DIR/runner.log" || fail 'runner counted a skipped package suite as passed'
             grep -Eq '^package: .* exit=0 output=' "$TEST_DIR/runner.log" || fail 'runner omitted skipped suite summary'
+        else
+            grep -q '^package suites: 1 passed$' "$TEST_DIR/runner.log" || fail 'runner mislabeled package count'
         fi
     else
         failing_suite=node

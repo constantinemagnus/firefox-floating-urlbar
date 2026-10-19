@@ -34,6 +34,8 @@ if [[ "$url" == https://example.invalid/repo.tar.gz ]]; then
     cp "$TEST_FIXTURE_ARCHIVE" "$output"
 elif [[ "$url" == https://api.github.com/repos/constantinemagnus/firefox-floating-urlbar/commits/main ]]; then
     printf '%s\n' "${TEST_REVISION:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+elif [[ "$url" == https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.sh ]]; then
+    printf '%s\n' 'printf "downloaded installer ran\n" > "$TEST_INITIAL_TRACE"'
 else
     prefix='https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/'
     [[ "$url" == "$prefix"* ]] || exit 1
@@ -66,6 +68,18 @@ else
     [[ "$?" == 9 ]] || fail 'remote installer changed child failure status'
 fi
 [[ -z "$(find "$TEST_DIR/tmp" -mindepth 1)" ]] || fail 'failed remote uninstall left temporary files'
+
+# An override archive must contain the selected installer, for either operation.
+for installer in install.sh uninstall.sh; do
+    mkdir -p "$TEST_DIR/manual/firefox-floating-urlbar-manual"
+    printf 'manual archive\n' > "$TEST_DIR/manual/firefox-floating-urlbar-manual/README.md"
+    tar -czf "$TEST_DIR/manual.tar.gz" -C "$TEST_DIR/manual" firefox-floating-urlbar-manual
+    args=()
+    if [[ "$installer" == uninstall.sh ]]; then args=(--uninstall); fi
+    if TEST_FIXTURE_ARCHIVE="$TEST_DIR/manual.tar.gz" bash "$REPO_DIR/install-remote.sh" "${args[@]+"${args[@]}"}" > "$TEST_DIR/layout.log" 2>&1; then fail "accepted archive without $installer"; fi
+    grep -q 'unexpected repository archive layout' "$TEST_DIR/layout.log" || fail "missing layout diagnostic for $installer"
+    [[ -z "$(find "$TEST_DIR/tmp" -mindepth 1)" ]] || fail 'invalid layout left temporary files'
+done
 
 # Default mode uses one immutable revision and fetches only installer inputs.
 unset FIREFOX_FLOATING_URLBAR_URL
@@ -121,9 +135,16 @@ bash "$REPO_DIR/install-remote.sh" --uninstall --profile "$TEST_DIR/real-profile
 [[ "$(cat "$TEST_DIR/real-profile/chrome/utils/boot.sys.mjs")" == 'existing external loader' ]] || fail 'real remote uninstall changed external loader'
 [[ -z "$(find "$TEST_DIR/tmp" -mindepth 1)" ]] || fail 'real remote install/uninstall left temporary downloads'
 
-# The paste command must not run an empty shell when its initial curl fails.
+# Execute the actual README paste command with success and failure from our stub.
+paste_command="$(sed -n '/^installer=$(curl /{p;q;}' "$REPO_DIR/README.md")"
+[[ -n "$paste_command" ]] || fail 'Bash installation command missing from README'
+export TEST_INITIAL_TRACE="$TEST_DIR/initial.trace"
+bash -c "$paste_command"
+[[ "$(cat "$TEST_INITIAL_TRACE")" == 'downloaded installer ran' ]] || fail 'paste command did not execute the downloaded installer'
+rm "$TEST_INITIAL_TRACE"
 status=0
-TEST_CURL_FAIL=7 bash -c 'installer=$(curl -fsSL https://example.invalid/bootstrap) && bash -c "$installer"' || status=$?
+TEST_CURL_FAIL=7 bash -c "$paste_command" || status=$?
 [[ "$status" == 7 ]] || fail 'paste command swallowed initial download failure'
+[[ ! -e "$TEST_INITIAL_TRACE" ]] || fail 'paste command ran installer after download failure'
 
 echo 'Remote installer regressions passed (fixture downloads and stubbed curl; no network).'

@@ -28,7 +28,7 @@ if [[ -n "${FIREFOX_FLOATING_URLBAR_URL:-}" ]]; then
     download --output "$work/repo.tar.gz" "$FIREFOX_FLOATING_URLBAR_URL"
     tar -xzf "$work/repo.tar.gz" -C "$work"
     roots=( "$work"/firefox-floating-urlbar* )
-    [[ -d "${roots[0]}" ]] || { echo "Error: unexpected repository archive layout." >&2; exit 1; }
+    [[ -d "${roots[0]}" && -f "${roots[0]}/$installer" ]] || { echo "Error: unexpected repository archive layout." >&2; exit 1; }
     root="${roots[0]}"
 else
     echo "Downloading installer files..."

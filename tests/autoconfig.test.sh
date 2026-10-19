@@ -40,6 +40,7 @@ cat > "$TEST_DIR/bin/curl" <<'CURL'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'download\n' >> "$TEST_DOWNLOAD_TRACE"
+[[ "${TEST_AUTOCONFIG_DOWNLOAD_FAIL:-0}" == 0 ]] || exit 7
 while (( $# )); do
     if [[ "$1" == --output ]]; then cp "$TEST_AUTOCONFIG_ARCHIVE" "$2"; exit; fi
     shift
@@ -137,6 +138,126 @@ for receipt_state in empty truncated; do
     run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"
     [[ ! -e "$case_firefox/config.js" && ! -e "$case_firefox/.floating-urlbar-autoconfig" ]] || fail "$receipt_state shared receipt was not recovered"
 done
+
+# Reinstall repairs receipt structure using upstream hashes, never local edits.
+for receipt_state in missing empty truncated invalid duplicate edited edited-module; do
+    make_case "profile-receipt-$receipt_state"
+    run_install
+    receipt="$case_profile/chrome/utils/.floating-urlbar-files"
+    case "$receipt_state" in
+        missing) rm "$receipt" ;;
+        empty) : > "$receipt" ;;
+        truncated|edited*) head -n 6 "$receipt" > "$TEST_DIR/partial"; cp "$TEST_DIR/partial" "$receipt" ;;
+        invalid) printf 'invalid receipt' > "$receipt" ;;
+        duplicate) head -n 1 "$receipt" >> "$receipt" ;;
+    esac
+    edited_file=boot.sys.mjs
+    if [[ "$receipt_state" == edited-module ]]; then edited_file=fs.sys.mjs; fi
+    if [[ "$receipt_state" == edited* ]]; then printf 'preserve local edit\n' > "$case_profile/chrome/utils/$edited_file"; fi
+    run_install
+    [[ "$(wc -l < "$receipt" | tr -d ' ')" == 8 ]] || fail "$receipt_state profile receipt was not repaired"
+    if [[ "$receipt_state" == edited* ]]; then
+        if run_uninstall --remove-autoconfig; then fail 'receipt repair claimed local edit'; fi
+        if run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"; then fail 'receipt repair bypassed shared cleanup safeguards'; fi
+        [[ "$(cat "$case_profile/chrome/utils/$edited_file")" == 'preserve local edit' ]] || fail 'receipt repair lost local edit'
+        [[ -f "$case_firefox/config.js" ]] || fail 'receipt repair allowed partial shared cleanup'
+    else
+        run_uninstall --remove-autoconfig
+    fi
+done
+
+# Failed receipt repair leaves the current installation and damaged receipt intact.
+make_case receipt-offline
+run_install
+printf 'damaged receipt\n' > "$case_profile/chrome/utils/.floating-urlbar-files"
+cp -R "$case_profile" "$TEST_DIR/offline-before"
+if TEST_AUTOCONFIG_DOWNLOAD_FAIL=1 run_install; then fail 'offline receipt repair succeeded'; fi
+diff -r "$TEST_DIR/offline-before" "$case_profile" || fail 'offline receipt repair changed profile files'
+
+for receipt_state in missing invalid incomplete; do
+    make_case "shared-recovery-$receipt_state"
+    run_install
+    receipt="$case_firefox/.floating-urlbar-autoconfig"
+    case "$receipt_state" in
+        missing) rm "$receipt" ;;
+        invalid) printf 'damaged receipt\n' > "$receipt" ;;
+        incomplete) head -n 1 "$receipt" > "$TEST_DIR/partial"; cp "$TEST_DIR/partial" "$receipt" ;;
+    esac
+    if run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"; then fail 'cleanup accepted damaged shared receipt'; fi
+    grep -q 'Shared startup ownership cannot be restored by reinstalling' "$TEST_DIR/uninstall.log" || fail 'shared recovery message suggested reinstall'
+    [[ -f "$case_firefox/config.js" && -f "$case_profile/chrome/utils/boot.sys.mjs" ]] || fail 'shared receipt failure partially removed loader'
+done
+
+# Receipt repair can leave notice backups; uninstall/reinstall must keep them.
+make_case receipt-backup-cycle
+run_install
+printf 'preserve edited notice\n' > "$case_profile/chrome/utils/fx-autoconfig.txt"
+printf 'damaged receipt\n' > "$case_profile/chrome/utils/.floating-urlbar-files"
+run_install
+notice_backups=("$case_profile/chrome/utils/fx-autoconfig.txt.bak-"*)
+[[ ${#notice_backups[@]} == 1 && "$(cat "${notice_backups[0]}")" == 'preserve edited notice' ]] || fail 'receipt repair lost edited notice'
+run_uninstall --remove-autoconfig
+run_install
+[[ "$(cat "${notice_backups[0]}")" == 'preserve edited notice' ]] || fail 'reinstall changed notice backup'
+
+# Empty cleanup is successful; untouched backup directories must also survive.
+make_case cleanup-never-installed
+mkdir -p "$case_profile/chrome"
+printf 'unrelated native style\n' > "$case_profile/chrome/other.css"
+run_uninstall --remove-autoconfig
+run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"
+rm "$case_profile/chrome/other.css"
+run_install
+mkdir -p "$case_profile/chrome/assets.css" "$case_profile/chrome/utils/module.bak-old"
+run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"
+run_uninstall --remove-autoconfig
+run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"
+[[ -d "$case_profile/chrome/assets.css" && -d "$case_profile/chrome/utils/module.bak-old" ]] || fail 'cleanup removed untouched directories'
+
+# A PTY reaches the real interactive branches, including read failure (Ctrl+D).
+if command -v python3 >/dev/null 2>&1; then
+    python3 - "$TEST_DIR/checkout" "$TEST_DIR" <<'PY'
+import os
+from pathlib import Path
+import pty
+import subprocess
+import sys
+
+checkout, root = map(Path, sys.argv[1:])
+for index, (answers, profile_removed, shared_removed) in enumerate([
+    (b'\n', False, False), (b'invalid\n', False, False),
+    (b'no\n', False, False), (b'yes\nno\n', True, False),
+    (b'Y\nYES\n', True, True), (b'\x04', False, False),
+]):
+    profile, firefox = root / f'prompt-{index}/profile', root / f'prompt-{index}/Firefox'
+    profile.mkdir(parents=True)
+    firefox.mkdir()
+    (profile / 'prefs.js').write_text('preserve preferences\n')
+    (firefox / 'application.ini').write_text('[App]\n')
+    (firefox / 'firefox').write_text('#!/bin/sh\nexit 0\n')
+    (firefox / 'firefox').chmod(0o755)
+    subprocess.run(['bash', str(checkout / 'install.sh'), '--profile', str(profile), '--firefox-dir', str(firefox)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    master, slave = pty.openpty()
+    try:
+        process = subprocess.Popen(['bash', str(checkout / 'uninstall.sh'), '--profile', str(profile), '--firefox-dir', str(firefox)], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        os.close(slave)
+        os.write(master, answers)
+        try:
+            output = process.communicate(timeout=20)[0].decode()
+        except subprocess.TimeoutExpired:
+            process.kill()
+            raise AssertionError(f'cleanup prompt hung for {answers!r}: {process.communicate()[0]!r}')
+    finally:
+        os.close(master)
+    assert process.returncode == 0 and 'Uninstalled. Reopen Firefox' in output, output
+    assert 'Also remove fx-autoconfig' in output, output
+    assert (profile / 'chrome/utils/boot.sys.mjs').exists() != profile_removed, output
+    assert (firefox / 'config.js').exists() != shared_removed, output
+    assert not (profile / 'chrome/JS/replace-new-tab.uc.js').exists(), output
+PY
+else
+    echo 'SKIP: interactive cleanup regressions require Python 3 for a PTY.'
+fi
 
 # Optional loader refusal must not undo housekeeping for removed payloads.
 make_case cleanup-housekeeping

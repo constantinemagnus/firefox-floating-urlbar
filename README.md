@@ -74,7 +74,7 @@ Offline installer regressions, including rollback, pass on Windows PowerShell 5.
 One-command:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1 | iex"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm -ErrorAction Stop https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1)))"
 ```
 
 Or locally (PowerShell 5.1 or 7) from the extracted folder:
@@ -140,7 +140,7 @@ Interactive uninstall offers to remove fx-autoconfig installed by us; the defaul
 
 Shared startup files are a separate choice because they affect **all profiles** using that Firefox installation. Remove them only if no other profile or user needs AutoConfig: `./uninstall.sh --remove-shared-autoconfig --firefox-dir DIR`, or `install.ps1 -Uninstall -RemoveSharedAutoconfig -FirefoxDirectory DIR`. These options also remove our profile loader, and only delete startup files recorded as created by us and still unchanged. Other profiles and users cannot be checked automatically. Protected removals request sudo/UAC.
 
-Older installations lack these ownership records. Rerun the current installer once to record the profile loader against verified upstream files; legacy shared startup files remain unowned and need manual removal after checking other users and profiles. Locally edited loader files are kept.
+Older installations lack these ownership records. Rerun the current installer to restore a missing or damaged profile receipt against verified upstream files; this requires downloading the pinned fx-autoconfig snapshot again. A failed download leaves the existing profile loader and receipt untouched. Legacy shared startup files remain unowned; missing or damaged shared receipts need manual inspection before removal, after checking other users and profiles. Locally edited loader files are kept.
 
 Restart Firefox and clear the startup cache if needed. If an older version changed `browser.urlbar.openintab` and you never set it, reset it in `about:config`.
 

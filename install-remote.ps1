@@ -2,7 +2,7 @@
 # Paste this in PowerShell; it downloads the required files, runs install.ps1,
 # and cleans up:
 #
-#   powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1 | iex"
+#   powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm -ErrorAction Stop https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1)))"
 #
 # Override the archive with $env:FIREFOX_FLOATING_URLBAR_URL (mostly useful for tests).
 $ErrorActionPreference = 'Stop'
@@ -16,7 +16,7 @@ try {
         Invoke-WebRequest -UseBasicParsing -Uri $env:FIREFOX_FLOATING_URLBAR_URL -OutFile $archive
         Expand-Archive -LiteralPath $archive -DestinationPath $temp
         $root = Get-ChildItem -LiteralPath $temp -Directory |
-            Where-Object { $_.Name -like 'firefox-floating-urlbar*' } |
+            Where-Object { $_.Name -like 'firefox-floating-urlbar*' -and (Test-Path -LiteralPath (Join-Path $_.FullName 'install.ps1') -PathType Leaf) } |
             Select-Object -First 1
         if (-not $root) { throw 'Unexpected repository archive layout.' }
         $directory = $root.FullName

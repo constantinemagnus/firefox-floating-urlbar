@@ -6,6 +6,21 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync(path.join(__dirname, "../JS/replace-new-tab.uc.js"), "utf8");
 
+test("remote installers and archives include every required installer input", () => {
+    const read = file => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+    const bashFiles = read("install-remote.sh").match(/for file in ([\s\S]*?); do/)[1]
+        .replace(/\\\n/g, " ").trim().split(/\s+/);
+    const windowsFiles = [...read("install-remote.ps1").match(/foreach \(\$file in @\(([^)]+)\)/)[1].matchAll(/'([^']+)'/g)].map(m => m[1]);
+    const packageFiles = read("packaging/build-installers.sh").match(/files=\(([^)]+)\)/)[1].trim().split(/\s+/);
+    const shared = ["fx-autoconfig.conf", "JS/replace-new-tab.uc.js", "CSS/firefox-floating-urlbar.uc.css"];
+    assert.deepEqual(bashFiles.toSorted(), ["install.sh", "uninstall.sh", "lib.sh", "autoconfig.sh", ...shared].toSorted());
+    assert.deepEqual(windowsFiles.toSorted(), ["install.ps1", ...shared].toSorted());
+    for (const file of new Set([...bashFiles, ...windowsFiles])) {
+        assert.ok(packageFiles.includes(file), `archive missing ${file}`);
+        assert.ok(fs.existsSync(path.join(__dirname, "..", file)), `installer input missing: ${file}`);
+    }
+});
+
 test("floating-state selector agrees with the stylesheet and the mock", () => {
     const css = fs.readFileSync(path.join(__dirname, "../CSS/firefox-floating-urlbar.uc.css"), "utf8");
     const selector = source.match(/const CENTERED_SELECTOR = `([^`]+)`;/)[1]

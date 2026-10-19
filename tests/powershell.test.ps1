@@ -626,6 +626,115 @@ try {
             -not (Test-Path -LiteralPath $receipt)) "$receiptState shared receipt was not recovered"
     }
 
+    foreach ($receiptState in @('empty', 'truncated', 'invalid', 'duplicate', 'edited', 'edited-module', 'lowercase')) {
+        $recoveryProfile = Join-Path $temp "profile-receipt-$receiptState/profile"
+        $recoveryFirefox = Join-Path $temp "profile-receipt-$receiptState/Firefox"
+        [IO.Directory]::CreateDirectory($recoveryFirefox) | Out-Null
+        Set-Content "$recoveryFirefox/firefox.exe" 'fixture'
+        Ensure-Autoconfig $recoveryProfile $recoveryFirefox
+        $receipt = "$recoveryProfile/chrome/utils/.floating-urlbar-files"
+        $lines = @(Get-Content -LiteralPath $receipt)
+        $editedFile = if ($receiptState -eq 'edited-module') { 'fs.sys.mjs' } else { 'boot.sys.mjs' }
+        switch ($receiptState) {
+            'empty' { [IO.File]::WriteAllText($receipt, '') }
+            'truncated' { Set-Content -LiteralPath $receipt -Value $lines[0..5] }
+            'invalid' { Set-Content -LiteralPath $receipt -Value 'invalid receipt' }
+            'duplicate' { Add-Content -LiteralPath $receipt -Value $lines[0] }
+            { $_ -in @('edited', 'edited-module') } {
+                Set-Content -LiteralPath $receipt -Value $lines[0..5]
+                Set-Content "$recoveryProfile/chrome/utils/$editedFile" 'preserve local edit'
+            }
+            'lowercase' { Set-Content -LiteralPath $receipt -Value ($lines | ForEach-Object { $_.Substring(0, 64).ToLowerInvariant() + $_.Substring(64) }) }
+        }
+        Ensure-Autoconfig $recoveryProfile $recoveryFirefox
+        Assert-That (@(Get-Content -LiteralPath $receipt).Count -eq 8) "$receiptState profile receipt was not repaired"
+        if ($receiptState -in @('edited', 'edited-module')) {
+            Assert-Rejected { Remove-ManagedAutoconfig $recoveryProfile $recoveryFirefox $false } 'receipt repair claimed local edit'
+            Assert-Rejected { Remove-ManagedAutoconfig $recoveryProfile $recoveryFirefox $true } 'receipt repair bypassed shared cleanup safeguards'
+            Assert-That ((Get-Content "$recoveryProfile/chrome/utils/$editedFile") -eq 'preserve local edit') 'receipt repair lost local edit'
+            Assert-That (Test-Path "$recoveryFirefox/config.js") 'receipt repair allowed partial shared cleanup'
+        } else {
+            Remove-ManagedAutoconfig $recoveryProfile $recoveryFirefox $false
+        }
+    }
+
+    $cycleProfile = Join-Path $temp 'receipt-backup-cycle/profile'
+    $cycleFirefox = Join-Path $temp 'receipt-backup-cycle/Firefox'
+    [IO.Directory]::CreateDirectory($cycleFirefox) | Out-Null
+    Set-Content "$cycleFirefox/firefox.exe" 'fixture'
+    Ensure-Autoconfig $cycleProfile $cycleFirefox
+    Set-Content "$cycleProfile/chrome/utils/fx-autoconfig.txt" 'preserve edited notice'
+    Set-Content "$cycleProfile/chrome/utils/.floating-urlbar-files" 'damaged receipt'
+    Ensure-Autoconfig $cycleProfile $cycleFirefox
+    $noticeBackups = @(Get-ChildItem "$cycleProfile/chrome/utils" -Filter 'fx-autoconfig.txt.bak-*')
+    Assert-That ($noticeBackups.Count -eq 1 -and (Get-Content -LiteralPath $noticeBackups[0].FullName) -eq 'preserve edited notice') 'receipt repair lost edited notice'
+    Remove-ManagedAutoconfig $cycleProfile $cycleFirefox $false
+    Ensure-Autoconfig $cycleProfile $cycleFirefox
+    Assert-That ((Get-Content -LiteralPath $noticeBackups[0].FullName) -eq 'preserve edited notice') 'reinstall changed notice backup'
+
+    $emptyProfile = Join-Path $temp 'cleanup-empty/profile'
+    $emptyFirefox = Join-Path $temp 'cleanup-empty/Firefox'
+    [IO.Directory]::CreateDirectory($emptyFirefox) | Out-Null
+    Set-Content "$emptyFirefox/firefox.exe" 'fixture'
+    [IO.Directory]::CreateDirectory("$emptyProfile/chrome") | Out-Null
+    Set-Content "$emptyProfile/chrome/other.css" 'unrelated native style'
+    Remove-ManagedAutoconfig $emptyProfile $emptyFirefox $false
+    $originalSharedRemoval = (Get-Command Remove-SharedAutoconfig).ScriptBlock
+    function Remove-SharedAutoconfig { throw 'No-op cleanup called the removal routine' }
+    try { Remove-ManagedAutoconfig $emptyProfile $emptyFirefox $true }
+    finally { Set-Item Function:Remove-SharedAutoconfig -Value $originalSharedRemoval }
+    Remove-Item "$emptyProfile/chrome/other.css"
+    Ensure-Autoconfig $emptyProfile $emptyFirefox
+    [IO.Directory]::CreateDirectory("$emptyProfile/chrome/assets.css") | Out-Null
+    [IO.Directory]::CreateDirectory("$emptyProfile/chrome/utils/module.bak-old") | Out-Null
+    Remove-ManagedAutoconfig $emptyProfile $emptyFirefox $true
+    Remove-ManagedAutoconfig $emptyProfile $emptyFirefox $true
+    Remove-SharedAutoconfig $emptyFirefox
+    Assert-That ((Test-Path "$emptyProfile/chrome/assets.css") -and (Test-Path "$emptyProfile/chrome/utils/module.bak-old")) 'cleanup removed untouched directories'
+
+    # Even no-op cleanup validates shared paths without invoking removal.
+    $linkedFirefox = Join-Path $temp 'cleanup-empty-linked/Firefox'
+    $linkedDefaults = Join-Path $temp 'cleanup-empty-linked/target'
+    [IO.Directory]::CreateDirectory($linkedFirefox) | Out-Null
+    [IO.Directory]::CreateDirectory($linkedDefaults) | Out-Null
+    Set-Content "$linkedFirefox/firefox.exe" 'fixture'
+    New-Item -ItemType SymbolicLink -Path "$linkedFirefox/defaults" -Target $linkedDefaults | Out-Null
+    Assert-Rejected { Remove-ManagedAutoconfig $emptyProfile $linkedFirefox $true } 'no-op cleanup accepted linked shared paths'
+
+    foreach ($receiptState in @('missing', 'invalid', 'incomplete')) {
+        $recoveryFirefox = Join-Path $temp "shared-recovery-$receiptState/Firefox"
+        [IO.Directory]::CreateDirectory($recoveryFirefox) | Out-Null
+        Install-StartupFiles "$fixture/program" $recoveryFirefox
+        $receipt = "$recoveryFirefox/.floating-urlbar-autoconfig"
+        switch ($receiptState) {
+            'missing' { Remove-Item -LiteralPath $receipt -Force }
+            'invalid' { Set-Content -LiteralPath $receipt -Value 'damaged receipt' }
+            'incomplete' { Set-Content -LiteralPath $receipt -Value @(Get-Content -LiteralPath $receipt)[0] }
+        }
+        $message = ''
+        try { Remove-SharedAutoconfig $recoveryFirefox } catch { $message = $_.Exception.Message }
+        Assert-That ($message.Contains('Shared startup ownership cannot be restored by reinstalling')) 'shared recovery message suggested reinstall'
+        Assert-That ((Test-Path "$recoveryFirefox/config.js") -and (Test-Path "$recoveryFirefox/defaults/pref/config-prefs.js")) 'shared receipt failure removed startup files'
+    }
+
+    & {
+        # Download failure cannot rewrite a damaged receipt or a local module edit.
+        Set-Content "$cycleProfile/chrome/utils/.floating-urlbar-files" 'damaged receipt'
+        Set-Content "$cycleProfile/chrome/utils/fs.sys.mjs" 'preserve offline edit'
+        function Invoke-WebRequest { throw 'fixture offline receipt repair' }
+        Assert-Rejected { Ensure-Autoconfig $cycleProfile $cycleFirefox } 'offline receipt repair reported success'
+        Assert-That ((Get-Content "$cycleProfile/chrome/utils/.floating-urlbar-files") -eq 'damaged receipt' -and
+            (Get-Content "$cycleProfile/chrome/utils/fs.sys.mjs") -eq 'preserve offline edit') 'offline receipt repair changed local files'
+    }
+
+    foreach ($answer in @('', 'n', 'no', 'invalid', 'y', 'YES')) {
+        function Read-Host { return $answer }
+        Assert-That ((Read-CleanupConfirmation 'fixture') -eq ($answer -in @('y', 'yes'))) "incorrect cleanup response: $answer"
+    }
+    function Read-Host { throw 'fixture stdin failure' }
+    Assert-That (-not (Read-CleanupConfirmation 'fixture')) 'stdin failure allowed cleanup'
+    Remove-Item Function:Read-Host
+
     # Optional loader refusal must leave the completed payload uninstall recorded.
     & {
         $ProfilePath = Join-Path $temp 'cleanup-housekeeping/profile'
@@ -639,7 +748,7 @@ try {
         $RemoveAutoconfig = $false
         $RemoveSharedAutoconfig = $false
         Invoke-FloatingUrlbarInstall
-        Remove-Item -LiteralPath "$ProfilePath/chrome/utils/.floating-urlbar-source"
+        Remove-Item -LiteralPath "$ProfilePath/chrome/utils/.floating-urlbar-source" -Force
         $Uninstall = $true
         $RemoveAutoconfig = $true
         Assert-Rejected { Invoke-FloatingUrlbarInstall } 'unowned loader cleanup succeeded'
@@ -850,6 +959,53 @@ if ($remoteExit) { exit $remoteExit }
         Assert-That ($trace.Uninstall -and $trace.ProfilePath -eq 'temporary profile with spaces') 'remote arguments were not forwarded'
         Assert-That (-not (Test-Path -LiteralPath $trace.Directory)) 'remote launcher left temporary files'
     }
+    Remove-Item -LiteralPath "$remoteFixture/install.ps1"
+    $manualArchive = Join-Path $temp 'manual.zip'
+    Set-Content -LiteralPath "$remoteFixture/README.md" 'manual payload'
+    Compress-Archive -LiteralPath $remoteFixture -DestinationPath $manualArchive
+    $remoteArchive = $manualArchive
+    $layoutError = ''
+    try { & "$repo/install-remote.ps1" } catch { $layoutError = $_.Exception.Message }
+    Assert-That ($layoutError -eq 'Unexpected repository archive layout.') 'manual ZIP did not produce layout error'
+    # Restore the stub for the remaining lean-download tests.
+    Expand-Archive -LiteralPath "$temp/remote.zip" -DestinationPath "$temp/restored-remote"
+    Copy-Item -LiteralPath "$temp/restored-remote/firefox-floating-urlbar-main/install.ps1" -Destination "$remoteFixture/install.ps1"
+
+    # Exercise both shells: caller interpolation, then a real child with mocked HTTP.
+    $readme = Get-Content -LiteralPath "$repo/README.md" -Raw
+    $pasteCommand = [regex]::Match($readme, 'powershell -NoProfile -ExecutionPolicy Bypass -Command "[^"]+"').Value
+    Assert-That ($pasteCommand -ne '') 'Windows installation command missing'
+    foreach ($downloadMode in @('success', 'failure')) {
+        $requestTrace = Join-Path $temp "initial-$downloadMode-request"
+        $executionTrace = Join-Path $temp "initial-$downloadMode-executed"
+        $mockModule = Join-Path $temp "initial-$downloadMode.psm1"
+        $mockSource = @'
+function Invoke-RestMethod {
+    [CmdletBinding()]
+    param([string]$Uri)
+    [IO.File]::WriteAllText('__REQUEST__', $Uri)
+    if ('__MODE__' -eq 'failure') { Write-Error 'fixture initial download failure'; return }
+    return "[IO.File]::WriteAllText('__EXECUTED__', 'installed'); exit 0"
+}
+Export-ModuleMember -Function Invoke-RestMethod
+'@
+        $mockSource = $mockSource.Replace('__REQUEST__', $requestTrace.Replace("'", "''")).Replace('__EXECUTED__', $executionTrace.Replace("'", "''")).Replace('__MODE__', $downloadMode)
+        Set-Content -LiteralPath $mockModule -Value $mockSource
+        # Only substitute the executable; preserve the README's native argument syntax.
+        $invocation = $pasteCommand.Replace('powershell -NoProfile', "& '$($interpreter.Replace("'", "''"))' -NoProfile")
+        $invocation = $invocation.Replace('-Command "', "-Command `"Import-Module '$($mockModule.Replace("'", "''"))' -Force -ErrorAction Stop; if ((Get-Command irm).ResolvedCommand.ModuleName -ne 'initial-$downloadMode') { throw 'HTTP mock is not active' }; ")
+        $caller = Join-Path $temp "initial-$downloadMode-caller.ps1"
+        Set-Content -LiteralPath $caller -Value ("`$ErrorActionPreference = 'Continue'`n" + $invocation + "`nexit `$LASTEXITCODE")
+        & $interpreter -NoProfile -NonInteractive -File $caller
+        Assert-That ((Test-Path -LiteralPath $requestTrace) -and
+            (Get-Content -LiteralPath $requestTrace) -eq 'https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1') 'documented command did not call the download mock with the expected URL'
+        if ($downloadMode -eq 'success') {
+            Assert-That ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $executionTrace)) 'documented command did not execute the downloaded installer'
+        } else {
+            Assert-That ($LASTEXITCODE -ne 0 -and -not (Test-Path -LiteralPath $executionTrace)) 'initial download failure reported success or ran the installer'
+        }
+    }
+
     $env:FIREFOX_FLOATING_URLBAR_URL = $null
     $remoteExit = 0
     $global:floatingUrlbarRemoteDownloads = @()

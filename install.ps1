@@ -277,28 +277,40 @@ function Write-AutoconfigReceipt([string]$Receipt, [string]$Base, [string[]]$Fil
     Set-Content -LiteralPath $Receipt -Value $lines -Encoding ASCII
 }
 
-function Assert-AutoconfigReceipt([string]$Receipt, [string]$Base, [string[]]$Files) {
+function Assert-AutoconfigReceipt([string]$Receipt, [string]$Base, [string[]]$Files, [switch]$StructureOnly) {
+    $recovery = if ([IO.Path]::GetFileName($Receipt) -eq '.floating-urlbar-autoconfig') {
+        'Shared startup ownership cannot be restored by reinstalling; inspect these files manually after checking other profiles and users.'
+    } else {
+        'Reinstall to restore a managed profile receipt using verified upstream files; locally edited files remain protected.'
+    }
     Assert-Destination $Receipt
-    if (-not (Test-Path -LiteralPath $Receipt -PathType Leaf)) { throw "No ownership record for $Base; keeping fx-autoconfig." }
+    if (-not (Test-Path -LiteralPath $Receipt -PathType Leaf)) { throw "No ownership record for $Base; keeping fx-autoconfig. $recovery" }
     $seen = @()
     foreach ($line in Get-Content -LiteralPath $Receipt) {
-        if ($line -notmatch '^([0-9a-fA-F]{64}) (.+)$') { throw "Invalid ownership record: $Receipt" }
+        if ($line -notmatch '^([0-9a-fA-F]{64}) (.+)$') { throw "Invalid ownership record: $Receipt. $recovery" }
         $hash = $Matches[1]
         $file = $Matches[2]
         if ($file -cnotin $Files -or $file -cin $seen) { throw "Unexpected ownership entry: $file" }
         $seen += $file
         $path = Join-Path $Base $file
         Assert-Destination $path
-        if ((Test-Path -LiteralPath $path) -and (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $hash) {
+        if (-not $StructureOnly -and (Test-Path -LiteralPath $path) -and (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $hash) {
             throw "Locally changed fx-autoconfig file; keeping the loader: $path"
         }
     }
-    if ($seen.Count -ne $Files.Count) { throw "Incomplete ownership record: $Receipt" }
+    if ($seen.Count -ne $Files.Count) { throw "Incomplete ownership record: $Receipt. $recovery" }
 }
 
 function Remove-SharedAutoconfig([string]$Directory) {
     foreach ($path in @('defaults', 'defaults/pref')) { Assert-Destination (Join-Path $Directory $path) -Directory }
     $files = @('config.js', 'defaults/pref/config-prefs.js')
+    $present = $false
+    foreach ($file in $files + @('.floating-urlbar-autoconfig')) {
+        $path = Join-Path $Directory $file
+        Assert-Destination $path
+        if (Test-Path -LiteralPath $path) { $present = $true }
+    }
+    if (-not $present) { return }
     Assert-AutoconfigReceipt "$Directory/.floating-urlbar-autoconfig" $Directory $files
     # Disable AutoConfig before removing its script.
     foreach ($file in @('defaults/pref/config-prefs.js', 'config.js', '.floating-urlbar-autoconfig')) {
@@ -315,29 +327,42 @@ function Remove-ManagedAutoconfig([string]$SelectedProfile, [string]$ExplicitDir
     $owned = Test-Path -LiteralPath "$utils/.floating-urlbar-source" -PathType Leaf
     $files = @('chrome.manifest') + $AutoconfigModules + @('fx-autoconfig.LICENSE', 'fx-autoconfig.txt')
     if ($owned) { Assert-AutoconfigReceipt "$utils/.floating-urlbar-files" $utils $files }
-    elseif (-not $Shared) { throw 'This loader was not installed by us; keeping fx-autoconfig.' }
-    if (Test-Path -LiteralPath "$SelectedProfile/chrome" -PathType Container) {
-        foreach ($item in Get-ChildItem -LiteralPath "$SelectedProfile/chrome" -Recurse -Force) {
-            # Do not follow links into other profiles or customizations.
-            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Linked customization; keeping fx-autoconfig: $($item.FullName)" }
-            $nativeStyle = -not $item.PSIsContainer -and (Test-SameProfilePath $item.DirectoryName "$SelectedProfile/chrome") -and
-                $item.Name -cin @('userChrome.css', 'userContent.css')
-            if (-not $item.PSIsContainer -and -not $nativeStyle -and -not (Test-SameProfilePath $item.DirectoryName $utils) -and $item.Extension -in @('.js', '.css')) {
-                throw "Other customization found; keeping fx-autoconfig: $($item.FullName)"
-            }
-        }
-    }
     if (Test-Path -LiteralPath $utils) {
         foreach ($item in Get-ChildItem -LiteralPath $utils -Force) {
-            if ($item.Name -like '*.bak-*') { Assert-Destination $item.FullName; continue }
+            if ($item.Name -like '*.bak-*') { continue }
             if (-not $owned) { throw 'This loader was not installed by us; keeping fx-autoconfig.' }
             if ($item.Name -cnotin ($files + @('.floating-urlbar-source', '.floating-urlbar-files'))) {
                 throw "Other loader file found; keeping fx-autoconfig: $($item.FullName)"
             }
         }
     }
+    $sharedPresent = $false
     if ($Shared) {
         $directory = Find-FirefoxDirectory $SelectedProfile $ExplicitDirectory
+        foreach ($path in @('defaults', 'defaults/pref')) { Assert-Destination (Join-Path $directory $path) -Directory }
+        foreach ($file in @('config.js', 'defaults/pref/config-prefs.js', '.floating-urlbar-autoconfig')) {
+            Assert-Destination (Join-Path $directory $file)
+            if (Get-ExistingItem (Join-Path $directory $file)) { $sharedPresent = $true }
+        }
+    }
+    if (-not $owned -and -not $sharedPresent) {
+        return
+    }
+    if (Test-Path -LiteralPath "$SelectedProfile/chrome" -PathType Container) {
+        $chrome = Get-Item -LiteralPath "$SelectedProfile/chrome" -Force
+        $chromePath = $chrome.FullName
+        $utilsPath = Join-Path $chromePath 'utils'
+        foreach ($item in Get-ChildItem -LiteralPath $chromePath -Recurse -Force) {
+            # Do not follow links into other profiles or customizations.
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Linked customization; keeping fx-autoconfig: $($item.FullName)" }
+            $nativeStyle = -not $item.PSIsContainer -and [string]::Equals($item.DirectoryName, $chromePath, [StringComparison]::OrdinalIgnoreCase) -and
+                $item.Name -cin @('userChrome.css', 'userContent.css')
+            if (-not $item.PSIsContainer -and -not $nativeStyle -and -not [string]::Equals($item.DirectoryName, $utilsPath, [StringComparison]::OrdinalIgnoreCase) -and $item.Extension -in @('.js', '.css')) {
+                throw "Other customization found; keeping fx-autoconfig: $($item.FullName)"
+            }
+        }
+    }
+    if ($sharedPresent) {
         try { Remove-SharedAutoconfig $directory }
         catch [UnauthorizedAccessException] {
             $quotedScript = $PSCommandPath.Replace("'", "''")
@@ -388,6 +413,12 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
     Assert-Destination (Join-Path $SelectedProfile 'chrome/resources') -Directory
     Assert-Destination $marker
     Assert-Destination "$utils/.floating-urlbar-files"
+    $files = @('chrome.manifest') + $AutoconfigModules + @('fx-autoconfig.LICENSE', 'fx-autoconfig.txt')
+    $receiptComplete = $false
+    try {
+        Assert-AutoconfigReceipt "$utils/.floating-urlbar-files" $utils $files -StructureOnly
+        $receiptComplete = $true
+    } catch { }
     $complete = @(@('chrome.manifest') + $AutoconfigModules | Where-Object {
         -not (Test-Path -LiteralPath (Join-Path $utils $_) -PathType Leaf)
     }).Count -eq 0
@@ -399,11 +430,11 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
             (Test-Path -LiteralPath "$directory/defaults/pref/config-prefs.js" -PathType Leaf) -and
             (Test-Path -LiteralPath "$utils/fx-autoconfig.LICENSE" -PathType Leaf) -and
             (Test-Path -LiteralPath "$utils/fx-autoconfig.txt" -PathType Leaf) -and
-            (Test-Path -LiteralPath "$utils/.floating-urlbar-files" -PathType Leaf)) { return }
+            $receiptComplete) { return }
         $repairOnly = $true
     }
     if ((Test-Path -LiteralPath $utils) -and -not (Test-Path -LiteralPath $marker) -and
-        @(Get-ChildItem -LiteralPath $utils -Force).Count) {
+        @(Get-ChildItem -LiteralPath $utils -Force | Where-Object { $_.Name -notlike '*.bak-*' }).Count) {
         throw "Existing incomplete loader in $utils; restore or move it aside before installing."
     }
     foreach ($file in @('chrome.manifest') + $AutoconfigModules) { Assert-Destination (Join-Path $utils $file) }
@@ -453,13 +484,11 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
         Copy-WithBackup "$source/LICENSE" "$utils/fx-autoconfig.LICENSE"
         Set-Content -LiteralPath "$source/fx-autoconfig.txt" -Encoding ASCII -Value "fx-autoconfig by MrOtherGuy`nLicense: MPL-2.0 (see fx-autoconfig.LICENSE).`nUnmodified source: https://github.com/MrOtherGuy/fx-autoconfig/tree/$($AutoconfigPin.AUTOCONFIG_COMMIT)"
         Copy-WithBackup "$source/fx-autoconfig.txt" "$utils/fx-autoconfig.txt"
-        if (-not $repairOnly -or -not (Test-Path -LiteralPath "$utils/.floating-urlbar-files")) {
+        if (-not $repairOnly -or -not $receiptComplete) {
             $receipt = Join-Path $temp 'owned-files'
-            Write-AutoconfigReceipt $receipt "$source/profile/chrome/utils" (@('chrome.manifest') + $AutoconfigModules)
-            Add-Content -LiteralPath $receipt -Encoding ASCII -Value @(
-                "$((Get-FileHash -LiteralPath "$source/LICENSE").Hash) fx-autoconfig.LICENSE",
-                "$((Get-FileHash -LiteralPath "$source/fx-autoconfig.txt").Hash) fx-autoconfig.txt"
-            )
+            Copy-Item -LiteralPath "$source/LICENSE" -Destination "$source/profile/chrome/utils/fx-autoconfig.LICENSE"
+            Copy-Item -LiteralPath "$source/fx-autoconfig.txt" -Destination "$source/profile/chrome/utils/fx-autoconfig.txt"
+            Write-AutoconfigReceipt $receipt "$source/profile/chrome/utils" $files
             Copy-Item -LiteralPath $receipt -Destination "$utils/.floating-urlbar-files"
         }
         if ($repairOnly) {
@@ -475,6 +504,11 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
         Set-Content -LiteralPath $marker -Value $AutoconfigPin.AUTOCONFIG_COMMIT -Encoding ASCII
         Write-Host 'fx-autoconfig is ready.'
     } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
+}
+
+function Read-CleanupConfirmation([string]$Prompt) {
+    try { return (Read-Host $Prompt) -match '^(?i:y|yes)$' }
+    catch { Write-Warning 'Could not read cleanup confirmation; keeping fx-autoconfig.'; return $false }
 }
 
 function Invoke-FloatingUrlbarInstall {
@@ -557,11 +591,11 @@ function Invoke-FloatingUrlbarInstall {
         $sharedCleanup = [bool]$RemoveSharedAutoconfig
         if (-not $cleanup -and -not [Console]::IsInputRedirected -and [Environment]::UserInteractive -and
             (Test-Path -LiteralPath "$ProfilePath/chrome/utils/.floating-urlbar-source" -PathType Leaf)) {
-            $cleanup = (Read-Host 'Also remove fx-autoconfig installed by us from this profile? [y/N]') -match '^(?i:y|yes)$'
+            $cleanup = Read-CleanupConfirmation 'Also remove fx-autoconfig installed by us from this profile? [y/N]'
         }
         if ($cleanup) {
             if (-not $sharedCleanup -and -not [Console]::IsInputRedirected -and [Environment]::UserInteractive) {
-                $sharedCleanup = (Read-Host 'Also remove our shared startup files? This disables AutoConfig for ALL profiles; choose yes only if none need it. [y/N]') -match '^(?i:y|yes)$'
+                $sharedCleanup = Read-CleanupConfirmation 'Also remove our shared startup files? This disables AutoConfig for ALL profiles; choose yes only if none need it. [y/N]'
             }
             Remove-ManagedAutoconfig $ProfilePath $FirefoxDirectory $sharedCleanup
         }
