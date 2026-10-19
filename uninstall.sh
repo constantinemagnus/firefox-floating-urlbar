@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=autoconfig.sh
+source "$SCRIPT_DIR/autoconfig.sh"
 
 usage() {
     cat <<USAGE
@@ -13,6 +15,9 @@ Usage: ./uninstall.sh [options] [PROFILE_DIR]
 Options:
   -p, --profile DIR   Uninstall from this profile folder
       --root DIR      Firefox profile root (folder containing profiles.ini)
+      --remove-autoconfig  Also remove our unchanged profile loader
+      --remove-shared-autoconfig  Also remove our shared startup files (all profiles)
+      --firefox-dir DIR  Firefox installation directory for shared cleanup
   -h, --help          Show this help
 
 Removes the script and stylesheet from the profile. If you edited an installed
@@ -21,11 +26,17 @@ USAGE
 }
 
 PROFILE=""
+REMOVE_AUTOCONFIG=0
+REMOVE_SHARED_AUTOCONFIG=0
+FIREFOX_DIR=""
 
 while (( $# > 0 )); do
     case "$1" in
         -p|--profile) [[ -n "${2:-}" ]] || die "$1 needs a nonempty value"; PROFILE="$2"; shift 2 ;;
         --root)       [[ -n "${2:-}" ]] || die "$1 needs a nonempty value"; PROFILE_ROOT="$2"; shift 2 ;;
+        --remove-autoconfig) REMOVE_AUTOCONFIG=1; shift ;;
+        --remove-shared-autoconfig) REMOVE_AUTOCONFIG=1; REMOVE_SHARED_AUTOCONFIG=1; shift ;;
+        --firefox-dir) [[ -n "${2:-}" ]] || die "$1 needs a nonempty value"; FIREFOX_DIR="$2"; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         -*)           die "Unknown option: $1 (see --help)" ;;
         *)            [[ -n "$1" ]] || die "Profile directory must not be empty"; PROFILE="$1"; shift ;;
@@ -87,11 +98,23 @@ if saved="$(load_saved_profile)" && [[ "$saved" -ef "$PROFILE" ]]; then
     rm -f -- "$SAVED_PROFILE_FILE"
 fi
 
+if (( REMOVE_AUTOCONFIG == 0 )) && [[ -t 0 && -f "$PROFILE/chrome/utils/.floating-urlbar-source" ]]; then
+    read -r -p "Also remove fx-autoconfig installed by us from this profile? [y/N]: " answer || answer=""
+    if [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]]; then REMOVE_AUTOCONFIG=1; fi
+fi
+if (( REMOVE_AUTOCONFIG )); then
+    if (( REMOVE_SHARED_AUTOCONFIG == 0 )) && [[ -t 0 ]]; then
+        read -r -p "Also remove our shared Firefox startup files? This disables AutoConfig for ALL profiles; choose yes only if none need it. [y/N]: " answer || answer=""
+        if [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]]; then REMOVE_SHARED_AUTOCONFIG=1; fi
+    fi
+    remove_autoconfig "$PROFILE" "$FIREFOX_DIR" "$REMOVE_SHARED_AUTOCONFIG"
+fi
+
 cat <<'NOTES'
 
 Uninstalled. Reopen Firefox; if the old behaviour persists, clear the startup
 cache in about:support.
-Shared fx-autoconfig files remain installed for other user scripts.
+Existing or shared fx-autoconfig files are kept unless explicitly selected for cleanup.
 
 Optional cleanup in about:config:
   - Reset any uc.floatingurlbar.* preferences you created.

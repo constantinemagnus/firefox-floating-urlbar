@@ -14,10 +14,13 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
     # shellcheck source=../packaging/fx-autoconfig/PKGBUILD
     source "$REPO_DIR/packaging/fx-autoconfig/PKGBUILD"
     [[ "$_commit" == "$AUTOCONFIG_COMMIT" && "${sha256sums[0]}" == "$AUTOCONFIG_TAR_SHA256" ]] || fail 'Arch and installer source pins differ'
+    source "$REPO_DIR/autoconfig.sh"
+    powershell_modules="$(sed -n 's/^\$AutoconfigModules = @(\(.*\))$/\1/p' "$REPO_DIR/install.ps1" | tr -d "',")"
+    [[ "$powershell_modules" == "${AUTOCONFIG_MODULES[*]}" ]] || fail 'Bash and PowerShell loader file lists differ'
 )
 
 mkdir -p "$TEST_DIR/checkout/JS" "$TEST_DIR/checkout/CSS" "$TEST_DIR/bin"
-cp "$REPO_DIR/"{install.sh,lib.sh,autoconfig.sh} "$TEST_DIR/checkout/"
+cp "$REPO_DIR/"{install.sh,uninstall.sh,lib.sh,autoconfig.sh} "$TEST_DIR/checkout/"
 cp "$REPO_DIR/JS/replace-new-tab.uc.js" "$TEST_DIR/checkout/JS/"
 cp "$REPO_DIR/CSS/firefox-floating-urlbar.uc.css" "$TEST_DIR/checkout/CSS/"
 fixture="$TEST_DIR/source/fx-autoconfig-fixture"
@@ -43,7 +46,7 @@ while (( $# )); do
 done
 exit 1
 CURL
-printf '#!/bin/sh\nexit 0\n' > "$TEST_DIR/bin/pgrep"
+printf '#!/bin/sh\nexit "${TEST_FIREFOX_RUNNING:-0}"\n' > "$TEST_DIR/bin/pgrep"
 printf '#!/bin/sh\necho "unexpected sudo" >&2\nexit 1\n' > "$TEST_DIR/bin/sudo"
 chmod +x "$TEST_DIR/bin/"*
 export PATH="$TEST_DIR/bin:$PATH" XDG_CONFIG_HOME="$TEST_DIR/config"
@@ -72,6 +75,220 @@ grep -q 'https://github.com/MrOtherGuy/fx-autoconfig/tree/fixture' "$case_profil
 [[ "$(cat "$case_profile/prefs.js")" == 'unchanged prefs' ]] || fail 'prefs changed'
 run_install
 (( $(wc -l < "$TEST_DOWNLOAD_TRACE") == 1 )) || fail 'downloaded again on unchanged reinstall'
+[[ -f "$case_profile/chrome/utils/.floating-urlbar-files" && -f "$case_firefox/.floating-urlbar-autoconfig" ]] || fail 'ownership records missing'
+
+# Exercise the real non-writable-directory branch without real privileges.
+make_case sudo-path
+mkdir -p "$TEST_DIR/recording-sudo"
+export TEST_SUDO_FIREFOX="$case_firefox" TEST_SUDO_PROFILE="$case_profile" TEST_SUDO_TRACE="$TEST_DIR/sudo.trace"
+cat > "$TEST_DIR/recording-sudo/sudo" <<'SUDO'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ ! -e "$TEST_SUDO_PROFILE/chrome" ]] || { echo 'profile written before startup elevation completed' >&2; exit 1; }
+printf '%s\n' "$@" >> "$TEST_SUDO_TRACE"
+[[ "${TEST_SUDO_FAIL:-0}" != 1 ]] || exit 13
+chmod u+w "$TEST_SUDO_FIREFOX"
+exec "$@"
+SUDO
+chmod +x "$TEST_DIR/recording-sudo/sudo"
+chmod u-w "$case_firefox"
+if [[ ! -w "$case_firefox" ]]; then
+    PATH="$TEST_DIR/recording-sudo:$PATH" run_install
+    # Source directories are random; validate every argument and the copy order.
+    awk -v firefox="$case_firefox" '
+        NR == 1 && $0 != "install" { exit 1 }
+        NR == 2 && $0 != "-d" { exit 1 }
+        NR == 3 && $0 != "-m755" { exit 1 }
+        NR == 4 && $0 != firefox "/defaults/pref" { exit 1 }
+        NR > 4 && (NR - 5) % 4 == 0 && $0 != "install" { exit 1 }
+        NR > 4 && (NR - 6) % 4 == 0 && $0 != "-m644" { exit 1 }
+        NR == 8 && $0 != firefox "/.floating-urlbar-autoconfig" { exit 1 }
+        NR == 7 && $0 !~ /\/program\/\.floating-urlbar-autoconfig$/ { exit 1 }
+        NR == 12 && $0 != firefox "/config.js" { exit 1 }
+        NR == 11 && $0 !~ /\/program\/config.js$/ { exit 1 }
+        NR == 16 && $0 != firefox "/defaults/pref/config-prefs.js" { exit 1 }
+        NR == 15 && $0 !~ /\/program\/defaults\/pref\/config-prefs.js$/ { exit 1 }
+        END { if (NR != 16) exit 1 }
+    ' "$TEST_SUDO_TRACE" || fail 'sudo command arguments or ordering changed'
+    cmp "$fixture/program/config.js" "$case_firefox/config.js" || fail 'sudo did not install startup file'
+    make_case sudo-failure
+    export TEST_SUDO_FIREFOX="$case_firefox" TEST_SUDO_PROFILE="$case_profile"
+    chmod u-w "$case_firefox"
+    if TEST_SUDO_FAIL=1 PATH="$TEST_DIR/recording-sudo:$PATH" run_install; then fail 'sudo failure reported success'; fi
+    [[ ! -e "$case_profile/chrome" && ! -e "$case_firefox/config.js" ]] || fail 'sudo failure wrote files'
+else
+    echo 'sudo-path fixture skipped: current user can write mode-555 directories.'
+fi
+chmod u+w "$case_firefox"
+
+run_uninstall() {
+    bash "$TEST_DIR/checkout/uninstall.sh" --profile "$case_profile" "$@" </dev/null > "$TEST_DIR/uninstall.log" 2>&1
+}
+
+# Interrupted receipt copies are recoverable before either startup file exists.
+for receipt_state in empty truncated; do
+    make_case "receipt-$receipt_state"
+    if [[ "$receipt_state" == empty ]]; then
+        touch "$case_firefox/.floating-urlbar-autoconfig"
+    else
+        printf 'partial ownership record' > "$case_firefox/.floating-urlbar-autoconfig"
+    fi
+    run_install
+    run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"
+    [[ ! -e "$case_firefox/config.js" && ! -e "$case_firefox/.floating-urlbar-autoconfig" ]] || fail "$receipt_state shared receipt was not recovered"
+done
+
+# Optional loader refusal must not undo housekeeping for removed payloads.
+make_case cleanup-housekeeping
+run_install
+rm "$case_profile/chrome/utils/.floating-urlbar-source"
+mkdir "$case_profile/startupCache"
+printf 'cached payload\n' > "$case_profile/startupCache/fixture"
+if TEST_FIREFOX_RUNNING=1 run_uninstall --remove-autoconfig; then fail 'unowned loader cleanup succeeded'; fi
+[[ ! -e "$case_profile/chrome/JS/replace-new-tab.uc.js" && ! -e "$case_profile/chrome/CSS/firefox-floating-urlbar.uc.css" ]] || fail 'cleanup refusal left payloads'
+[[ ! -e "$XDG_CONFIG_HOME/firefox-floating-urlbar/profile" && ! -e "$case_profile/startupCache" ]] || fail 'cleanup refusal skipped uninstall housekeeping'
+[[ -f "$case_profile/chrome/utils/boot.sys.mjs" && -f "$case_firefox/config.js" ]] || fail 'cleanup refusal removed unowned loader'
+
+for cleanup in keep profile shared edited other-script other-style linked-native other-utils external shared-edited shared-unowned malformed linked hardlinked; do
+    make_case "cleanup-$cleanup"
+    if [[ "$cleanup" == shared-unowned ]]; then
+        mkdir -p "$case_firefox/defaults/pref"
+        cp "$fixture/program/config.js" "$case_firefox/config.js"
+        cp "$fixture/program/defaults/pref/config-prefs.js" "$case_firefox/defaults/pref/config-prefs.js"
+    fi
+    run_install
+    case "$cleanup" in
+        keep)
+            run_uninstall
+            [[ -f "$case_profile/chrome/utils/boot.sys.mjs" && -f "$case_firefox/config.js" ]] || fail 'default uninstall removed loader'
+            ;;
+        profile)
+            run_uninstall --remove-autoconfig
+            [[ ! -e "$case_profile/chrome/utils" && -f "$case_firefox/config.js" ]] || fail 'profile-only cleanup changed shared files or left loader'
+            ;;
+        shared)
+            run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"
+            [[ ! -e "$case_profile/chrome/utils" && ! -e "$case_firefox/config.js" && ! -e "$case_firefox/defaults/pref/config-prefs.js" && ! -e "$case_firefox/.floating-urlbar-autoconfig" ]] || fail 'full cleanup left owned files'
+            ;;
+        *)
+            case "$cleanup" in
+                edited) printf 'local loader edit\n' > "$case_profile/chrome/utils/boot.sys.mjs" ;;
+                other-script) printf 'other script\n' > "$case_profile/chrome/JS/other.uc.js" ;;
+                other-style) printf 'nested style\n' > "$case_profile/chrome/CSS/userChrome.css" ;;
+                linked-native) ln -s "$fixture/program/config.js" "$case_profile/chrome/userChrome.css" ;;
+                other-utils) printf 'other module\n' > "$case_profile/chrome/utils/other.sys.mjs" ;;
+                external) rm "$case_profile/chrome/utils/.floating-urlbar-source" ;;
+                shared-edited) printf 'shared edit\n' > "$case_firefox/config.js" ;;
+                malformed) printf '%064d ../prefs.js\n' 0 > "$case_profile/chrome/utils/.floating-urlbar-files" ;;
+                linked) rm "$case_profile/chrome/utils/boot.sys.mjs"; ln -s "$fixture/profile/chrome/utils/boot.sys.mjs" "$case_profile/chrome/utils/boot.sys.mjs" ;;
+                hardlinked) rm "$case_profile/chrome/utils/boot.sys.mjs"; ln "$fixture/profile/chrome/utils/boot.sys.mjs" "$case_profile/chrome/utils/boot.sys.mjs" ;;
+            esac
+            if run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"; then fail "unsafe $cleanup cleanup succeeded"; fi
+            [[ -e "$case_profile/chrome/utils/chrome.manifest" && -e "$case_firefox/config.js" ]] || fail "$cleanup cleanup partially removed loader"
+            ;;
+    esac
+    [[ "$(cat "$case_profile/prefs.js")" == 'unchanged prefs' ]] || fail "$cleanup cleanup changed prefs"
+done
+
+for cleanup in delayed delayed-backup delayed-edited delayed-unowned missing-chrome native-styles windows-receipt; do
+    make_case "cleanup-$cleanup"
+    # Brackets must not be treated as find patterns when excluding native files.
+    mv "$case_profile" "$case_profile [2024]"
+    case_profile="$case_profile [2024]"
+    run_install
+    case "$cleanup" in
+        missing-chrome) rm -rf -- "$case_profile/chrome" ;;
+        delayed*)
+            if [[ "$cleanup" == delayed-backup ]]; then
+                printf 'preserve backup\n' > "$case_profile/chrome/utils/boot.sys.mjs.bak-old"
+            fi
+            run_uninstall --remove-autoconfig
+            [[ ! -e "$case_profile/chrome/utils/boot.sys.mjs" && -f "$case_firefox/config.js" ]] || fail 'first cleanup did not leave shared files'
+            if [[ "$cleanup" == delayed-edited ]]; then
+                printf 'local startup edit\n' > "$case_firefox/config.js"
+            elif [[ "$cleanup" == delayed-unowned ]]; then
+                mkdir -p "$case_profile/chrome/utils"
+                printf 'external loader\n' > "$case_profile/chrome/utils/boot.sys.mjs"
+            fi
+            ;;
+        native-styles)
+            printf 'native chrome style\n' > "$case_profile/chrome/userChrome.css"
+            printf 'native content style\n' > "$case_profile/chrome/userContent.css"
+            ;;
+        windows-receipt)
+            for receipt in "$case_profile/chrome/utils/.floating-urlbar-files" "$case_firefox/.floating-urlbar-autoconfig"; do
+                awk '{ printf "%s %s\r\n", toupper($1), $2 }' "$receipt" > "$TEST_DIR/windows-receipt"
+                cp "$TEST_DIR/windows-receipt" "$receipt"
+            done
+            ;;
+    esac
+    if [[ "$cleanup" == delayed-edited || "$cleanup" == delayed-unowned ]]; then
+        if run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"; then fail "unsafe $cleanup succeeded"; fi
+        [[ -f "$case_firefox/config.js" && -f "$case_firefox/defaults/pref/config-prefs.js" && -f "$case_firefox/.floating-urlbar-autoconfig" ]] || fail "$cleanup removed shared files"
+        if [[ "$cleanup" == delayed-unowned ]]; then
+            [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'external loader' ]] || fail 'delayed cleanup removed unowned loader'
+        fi
+        continue
+    fi
+    run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"
+    [[ ! -e "$case_profile/chrome/utils/boot.sys.mjs" && ! -e "$case_firefox/config.js" && ! -e "$case_firefox/.floating-urlbar-autoconfig" ]] || fail "$cleanup left owned files"
+    if [[ "$cleanup" == delayed-backup ]]; then
+        [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs.bak-old")" == 'preserve backup' ]] || fail 'delayed cleanup lost backup'
+    elif [[ "$cleanup" == native-styles ]]; then
+        [[ "$(cat "$case_profile/chrome/userChrome.css")" == 'native chrome style' && "$(cat "$case_profile/chrome/userContent.css")" == 'native content style' ]] || fail 'cleanup changed native styles'
+    fi
+done
+
+# The shared-removal elevation branch is isolated from all profile writes.
+for outcome in success failure; do
+    make_case "cleanup-sudo-$outcome"
+    run_install
+    chmod u-w "$case_firefox" "$case_firefox/defaults/pref"
+    if [[ ! -w "$case_firefox" ]]; then
+        (
+            source "$TEST_DIR/checkout/lib.sh"
+            source "$TEST_DIR/checkout/autoconfig.sh"
+            # Our payloads have already been removed by the uninstall entry point.
+            rm "$case_profile/chrome/JS/replace-new-tab.uc.js" "$case_profile/chrome/CSS/firefox-floating-urlbar.uc.css"
+            sudo() {
+                [[ -f "$case_profile/chrome/utils/boot.sys.mjs" ]] || fail 'profile removed before elevation finished'
+                [[ "$*" == "rm -f -- $case_firefox/"* ]] || fail 'unexpected privileged cleanup command'
+                [[ "$outcome" == success ]] || return 13
+                chmod u+w "$case_firefox" "$case_firefox/defaults/pref"
+                "$@"
+            }
+            if [[ "$outcome" == success ]]; then
+                remove_autoconfig "$case_profile" "$case_firefox" 1
+                [[ ! -e "$case_profile/chrome/utils" && ! -e "$case_firefox/config.js" ]] || fail 'sudo cleanup left owned files'
+            else
+                if remove_autoconfig "$case_profile" "$case_firefox" 1; then fail 'sudo cleanup failure reported success'; fi
+                [[ -f "$case_profile/chrome/utils/boot.sys.mjs" && -f "$case_firefox/config.js" ]] || fail 'sudo cleanup failure removed loader'
+            fi
+        ) > "$TEST_DIR/cleanup-sudo.log" 2>&1
+    fi
+    chmod u+w "$case_firefox" "$case_firefox/defaults/pref"
+done
+
+# Continue the original upgrade checks on a fresh managed installation.
+for legacy in unchanged edited; do
+    make_case "legacy-$legacy"
+    run_install
+    rm "$case_profile/chrome/utils/.floating-urlbar-files" "$case_firefox/.floating-urlbar-autoconfig"
+    if [[ "$legacy" == edited ]]; then printf 'legacy local edit\n' > "$case_profile/chrome/utils/boot.sys.mjs"; fi
+    run_install
+    [[ -f "$case_profile/chrome/utils/.floating-urlbar-files" && ! -e "$case_firefox/.floating-urlbar-autoconfig" ]] || fail 'legacy migration claimed shared files or missed profile receipt'
+    if [[ "$legacy" == unchanged ]]; then
+        run_uninstall --remove-autoconfig
+        [[ ! -e "$case_profile/chrome/utils" && -f "$case_firefox/config.js" ]] || fail 'legacy profile cleanup failed'
+    else
+        if run_uninstall --remove-autoconfig; then fail 'legacy migration claimed local edits'; fi
+        [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'legacy local edit' ]] || fail 'legacy local edit lost'
+    fi
+done
+
+make_case upgrade
+run_install
+downloads_before="$(wc -l < "$TEST_DOWNLOAD_TRACE")"
 
 # An upgrade of our loader keeps a backup; third-party loaders remain untouched.
 printf 'older\n' > "$case_profile/chrome/utils/.floating-urlbar-source"
@@ -83,7 +300,7 @@ rm "$case_profile/chrome/utils/.floating-urlbar-source"
 printf 'third-party loader\n' > "$case_profile/chrome/utils/boot.sys.mjs"
 run_install
 [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'third-party loader' ]] || fail 'replaced existing loader'
-(( $(wc -l < "$TEST_DOWNLOAD_TRACE") == 2 )) || fail 'existing loader triggered download'
+(( $(wc -l < "$TEST_DOWNLOAD_TRACE") == downloads_before + 1 )) || fail 'existing loader triggered download'
 
 # Existing loaders are preserved, with a warning if standard startup files are missing.
 for startup in config.js defaults/pref/config-prefs.js; do
@@ -93,7 +310,7 @@ for startup in config.js defaults/pref/config-prefs.js; do
         fail 'existing loader with missing startup file did not warn'
     [[ ! -e "$case_firefox/$startup" ]] || fail 'changed externally managed startup configuration'
     [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'third-party loader' ]] || fail 'changed external loader during startup check'
-    (( $(wc -l < "$TEST_DOWNLOAD_TRACE") == 2 )) || fail 'external loader startup check triggered download'
+    (( $(wc -l < "$TEST_DOWNLOAD_TRACE") == downloads_before + 1 )) || fail 'external loader startup check triggered download'
     cp "$fixture/program/$startup" "$case_firefox/$startup"
 done
 

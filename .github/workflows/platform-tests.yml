@@ -27,7 +27,7 @@ jobs:
       - name: Syntax and regression checks
         run: |
           node --check JS/replace-new-tab.uc.js
-          bash -n install.sh update.sh uninstall.sh lib.sh autoconfig.sh install-remote.sh tests/*.sh
+          bash -n install.sh update.sh uninstall.sh lib.sh autoconfig.sh install-remote.sh packaging/build-installers.sh tests/*.sh
           bash tests/run.sh
 
   macos:
@@ -66,8 +66,9 @@ jobs:
       - name: Installer and filesystem regressions with macOS tools
         run: |
           export PATH="/bin:/usr/bin:/usr/sbin:/sbin:$PATH"
-          bash -n install.sh update.sh uninstall.sh lib.sh autoconfig.sh install-remote.sh tests/*.sh
+          bash -n install.sh update.sh uninstall.sh lib.sh autoconfig.sh install-remote.sh packaging/build-installers.sh tests/*.sh
           bash tests/shell.test.sh
+          bash tests/package.test.sh
           bash tests/macos.test.sh
 
   windows:

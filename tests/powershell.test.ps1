@@ -4,6 +4,7 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) "floating-urlbar-tests-$([Guid]::Ne
 [IO.Directory]::CreateDirectory($temp) | Out-Null
 $originalAppData = $env:APPDATA
 $originalLocalAppData = $env:LOCALAPPDATA
+$originalRemoteArchive = $env:FIREFOX_FLOATING_URLBAR_URL
 
 function Assert-That([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw "FAIL: $Message" }
@@ -611,18 +612,233 @@ try {
         }
     }
 
+    # A retry heals an interrupted receipt copy before startup files exist.
+    foreach ($receiptState in @('empty', 'truncated')) {
+        $recoveryFirefox = Join-Path $temp "receipt-$receiptState/Firefox"
+        [IO.Directory]::CreateDirectory($recoveryFirefox) | Out-Null
+        $receipt = Join-Path $recoveryFirefox '.floating-urlbar-autoconfig'
+        $contents = if ($receiptState -eq 'empty') { '' } else { 'partial ownership record' }
+        [IO.File]::WriteAllText($receipt, $contents)
+        Install-StartupFiles "$fixture/program" $recoveryFirefox
+        Assert-AutoconfigReceipt $receipt $recoveryFirefox @('config.js', 'defaults/pref/config-prefs.js')
+        Remove-SharedAutoconfig $recoveryFirefox
+        Assert-That (-not (Test-Path -LiteralPath "$recoveryFirefox/config.js") -and
+            -not (Test-Path -LiteralPath $receipt)) "$receiptState shared receipt was not recovered"
+    }
+
+    # Optional loader refusal must leave the completed payload uninstall recorded.
+    & {
+        $ProfilePath = Join-Path $temp 'cleanup-housekeeping/profile'
+        $FirefoxDirectory = Join-Path $temp 'cleanup-housekeeping/Firefox'
+        [IO.Directory]::CreateDirectory($ProfilePath) | Out-Null
+        [IO.Directory]::CreateDirectory($FirefoxDirectory) | Out-Null
+        Set-Content -LiteralPath "$ProfilePath/prefs.js" 'preserve preferences'
+        Set-Content -LiteralPath "$FirefoxDirectory/firefox.exe" 'fixture'
+        $StartupOnly = $false
+        $Uninstall = $false
+        $RemoveAutoconfig = $false
+        $RemoveSharedAutoconfig = $false
+        Invoke-FloatingUrlbarInstall
+        Remove-Item -LiteralPath "$ProfilePath/chrome/utils/.floating-urlbar-source"
+        $Uninstall = $true
+        $RemoveAutoconfig = $true
+        Assert-Rejected { Invoke-FloatingUrlbarInstall } 'unowned loader cleanup succeeded'
+        Assert-That (-not (Test-Path -LiteralPath "$ProfilePath/chrome/JS/replace-new-tab.uc.js") -and
+            -not (Test-Path -LiteralPath "$ProfilePath/chrome/CSS/firefox-floating-urlbar.uc.css")) 'cleanup refusal left payloads'
+        Assert-That (-not (Test-Path -LiteralPath (Join-Path $env:APPDATA 'firefox-floating-urlbar/profile'))) 'cleanup refusal skipped saved-state cleanup'
+        Assert-That ((Test-Path -LiteralPath "$ProfilePath/chrome/utils/boot.sys.mjs") -and
+            (Test-Path -LiteralPath "$FirefoxDirectory/config.js")) 'cleanup refusal removed unowned loader'
+    }
+
+    # Cleanup requires ownership, unchanged files, and no dependent customization.
+    foreach ($cleanup in @('profile', 'shared', 'edited', 'other-script', 'other-style', 'linked-native', 'other-utils', 'external', 'shared-edited', 'shared-unowned', 'malformed', 'linked', 'hardlinked')) {
+        $cleanupProfile = Join-Path $temp "cleanup-$cleanup/profile"
+        $cleanupFirefox = Join-Path $temp "cleanup-$cleanup/Firefox"
+        [IO.Directory]::CreateDirectory($cleanupProfile) | Out-Null
+        [IO.Directory]::CreateDirectory($cleanupFirefox) | Out-Null
+        Set-Content "$cleanupProfile/prefs.js" 'preserve preferences'
+        Set-Content "$cleanupFirefox/firefox.exe" 'fixture'
+        if ($cleanup -eq 'shared-unowned') {
+            [IO.Directory]::CreateDirectory("$cleanupFirefox/defaults/pref") | Out-Null
+            Copy-Item "$fixture/program/config.js" "$cleanupFirefox/config.js"
+            Copy-Item "$fixture/program/defaults/pref/config-prefs.js" "$cleanupFirefox/defaults/pref/config-prefs.js"
+        }
+        Ensure-Autoconfig $cleanupProfile $cleanupFirefox
+        switch ($cleanup) {
+            'profile' {
+                Remove-ManagedAutoconfig $cleanupProfile $cleanupFirefox $false
+                Assert-That (-not (Test-Path "$cleanupProfile/chrome/utils") -and (Test-Path "$cleanupFirefox/config.js")) 'profile cleanup changed shared files or left loader'
+            }
+            'shared' {
+                Remove-ManagedAutoconfig $cleanupProfile $cleanupFirefox $true
+                Assert-That (-not (Test-Path "$cleanupProfile/chrome/utils") -and -not (Test-Path "$cleanupFirefox/config.js") -and
+                    -not (Test-Path "$cleanupFirefox/defaults/pref/config-prefs.js") -and -not (Test-Path "$cleanupFirefox/.floating-urlbar-autoconfig")) 'full cleanup left owned files'
+            }
+            default {
+                switch ($cleanup) {
+                    'edited' { Set-Content "$cleanupProfile/chrome/utils/boot.sys.mjs" 'local edit' }
+                    'other-script' { Set-Content "$cleanupProfile/chrome/JS/other.uc.js" 'other script' }
+                    'other-style' { Set-Content "$cleanupProfile/chrome/CSS/userChrome.css" 'nested style' }
+                    'linked-native' { New-Item -ItemType SymbolicLink -Path "$cleanupProfile/chrome/userChrome.css" -Target "$fixture/program/config.js" | Out-Null }
+                    'other-utils' { Set-Content "$cleanupProfile/chrome/utils/other.sys.mjs" 'other module' }
+                    'external' { Remove-Item "$cleanupProfile/chrome/utils/.floating-urlbar-source" -Force }
+                    'shared-edited' { Set-Content "$cleanupFirefox/config.js" 'local startup edit' }
+                    'malformed' { Set-Content "$cleanupProfile/chrome/utils/.floating-urlbar-files" "$('0' * 64) ../prefs.js" }
+                    'linked' {
+                        Remove-Item "$cleanupProfile/chrome/utils/boot.sys.mjs"
+                        New-Item -ItemType SymbolicLink -Path "$cleanupProfile/chrome/utils/boot.sys.mjs" -Target "$fixture/profile/chrome/utils/boot.sys.mjs" | Out-Null
+                    }
+                    'hardlinked' {
+                        Remove-Item "$cleanupProfile/chrome/utils/boot.sys.mjs"
+                        New-Item -ItemType HardLink -Path "$cleanupProfile/chrome/utils/boot.sys.mjs" -Target "$fixture/profile/chrome/utils/boot.sys.mjs" | Out-Null
+                    }
+                }
+                Assert-Rejected { Remove-ManagedAutoconfig $cleanupProfile $cleanupFirefox $true } "unsafe $cleanup cleanup succeeded"
+                Assert-That ((Test-Path "$cleanupProfile/chrome/utils/chrome.manifest") -and (Test-Path "$cleanupFirefox/config.js")) "$cleanup cleanup partially removed loader"
+            }
+        }
+        Assert-That ((Get-Content "$cleanupProfile/prefs.js") -eq 'preserve preferences') "$cleanup cleanup changed preferences"
+    }
+
+    foreach ($cleanup in @('delayed', 'delayed-backup', 'delayed-edited', 'delayed-unowned', 'missing-chrome', 'native-styles')) {
+        $cleanupProfile = Join-Path $temp "cleanup-$cleanup/profile [2024]"
+        $cleanupFirefox = Join-Path $temp "cleanup-$cleanup/Firefox [2024]"
+        [IO.Directory]::CreateDirectory($cleanupProfile) | Out-Null
+        [IO.Directory]::CreateDirectory($cleanupFirefox) | Out-Null
+        Set-Content -LiteralPath "$cleanupFirefox/firefox.exe" 'fixture'
+        Ensure-Autoconfig $cleanupProfile $cleanupFirefox
+        if ($cleanup -eq 'missing-chrome') {
+            Remove-Item -LiteralPath "$cleanupProfile/chrome" -Recurse -Force
+        } elseif ($cleanup -like 'delayed*') {
+            if ($cleanup -eq 'delayed-backup') {
+                Set-Content -LiteralPath "$cleanupProfile/chrome/utils/boot.sys.mjs.bak-old" 'preserve backup'
+            }
+            Remove-ManagedAutoconfig $cleanupProfile $cleanupFirefox $false
+            Assert-That (-not (Test-Path -LiteralPath "$cleanupProfile/chrome/utils/boot.sys.mjs") -and (Test-Path -LiteralPath "$cleanupFirefox/config.js")) 'first cleanup did not leave shared files'
+            if ($cleanup -eq 'delayed-edited') {
+                Set-Content -LiteralPath "$cleanupFirefox/config.js" 'local startup edit'
+            } elseif ($cleanup -eq 'delayed-unowned') {
+                [IO.Directory]::CreateDirectory("$cleanupProfile/chrome/utils") | Out-Null
+                Set-Content -LiteralPath "$cleanupProfile/chrome/utils/boot.sys.mjs" 'external loader'
+            }
+        } else {
+            Set-Content -LiteralPath "$cleanupProfile/chrome/userChrome.css" 'native chrome style'
+            Set-Content -LiteralPath "$cleanupProfile/chrome/userContent.css" 'native content style'
+        }
+        if ($cleanup -in @('delayed-edited', 'delayed-unowned')) {
+            Assert-Rejected { Remove-ManagedAutoconfig $cleanupProfile $cleanupFirefox $true } "unsafe $cleanup succeeded"
+            Assert-That ((Test-Path -LiteralPath "$cleanupFirefox/config.js") -and
+                (Test-Path -LiteralPath "$cleanupFirefox/defaults/pref/config-prefs.js") -and
+                (Test-Path -LiteralPath "$cleanupFirefox/.floating-urlbar-autoconfig")) "$cleanup removed shared files"
+            if ($cleanup -eq 'delayed-unowned') {
+                Assert-That ((Get-Content -LiteralPath "$cleanupProfile/chrome/utils/boot.sys.mjs") -eq 'external loader') 'delayed cleanup removed unowned loader'
+            }
+            continue
+        }
+        Remove-ManagedAutoconfig $cleanupProfile $cleanupFirefox $true
+        Assert-That (-not (Test-Path -LiteralPath "$cleanupProfile/chrome/utils/boot.sys.mjs") -and
+            -not (Test-Path -LiteralPath "$cleanupFirefox/config.js") -and
+            -not (Test-Path -LiteralPath "$cleanupFirefox/.floating-urlbar-autoconfig")) "$cleanup left owned files"
+        if ($cleanup -eq 'delayed-backup') {
+            Assert-That ((Get-Content -LiteralPath "$cleanupProfile/chrome/utils/boot.sys.mjs.bak-old") -eq 'preserve backup') 'delayed cleanup lost backup'
+        } elseif ($cleanup -eq 'native-styles') {
+            Assert-That ((Get-Content -LiteralPath "$cleanupProfile/chrome/userChrome.css") -eq 'native chrome style' -and
+                (Get-Content -LiteralPath "$cleanupProfile/chrome/userContent.css") -eq 'native content style') 'cleanup changed native styles'
+        }
+    }
+
+    $unownedFirefox = Join-Path $temp 'preexisting Firefox [2024]'
+    [IO.Directory]::CreateDirectory("$unownedFirefox/defaults/pref") | Out-Null
+    Copy-Item -LiteralPath "$fixture/program/config.js" -Destination "$unownedFirefox/config.js"
+    Copy-Item -LiteralPath "$fixture/program/defaults/pref/config-prefs.js" -Destination "$unownedFirefox/defaults/pref/config-prefs.js"
+    Install-StartupFiles "$fixture/program" $unownedFirefox
+    Assert-That (-not (Test-Path -LiteralPath "$unownedFirefox/.floating-urlbar-autoconfig")) 'claimed preexisting startup files in bracketed path'
+
+    # Legacy receipts are reconstructed from verified source, never from local edits.
+    foreach ($legacy in @('unchanged', 'edited')) {
+        $legacyProfile = Join-Path $temp "legacy-$legacy/profile"
+        $legacyFirefox = Join-Path $temp "legacy-$legacy/Firefox"
+        [IO.Directory]::CreateDirectory($legacyProfile) | Out-Null
+        [IO.Directory]::CreateDirectory($legacyFirefox) | Out-Null
+        Set-Content "$legacyFirefox/firefox.exe" 'fixture'
+        Ensure-Autoconfig $legacyProfile $legacyFirefox
+        Remove-Item "$legacyProfile/chrome/utils/.floating-urlbar-files", "$legacyFirefox/.floating-urlbar-autoconfig" -Force
+        if ($legacy -eq 'edited') { Set-Content "$legacyProfile/chrome/utils/boot.sys.mjs" 'legacy local edit' }
+        Ensure-Autoconfig $legacyProfile $legacyFirefox
+        Assert-That ((Test-Path "$legacyProfile/chrome/utils/.floating-urlbar-files") -and
+            -not (Test-Path "$legacyFirefox/.floating-urlbar-autoconfig")) 'legacy migration claimed shared files or missed profile receipt'
+        if ($legacy -eq 'unchanged') {
+            Remove-ManagedAutoconfig $legacyProfile $legacyFirefox $false
+            Assert-That (-not (Test-Path "$legacyProfile/chrome/utils") -and (Test-Path "$legacyFirefox/config.js")) 'legacy profile cleanup failed'
+        } else {
+            Assert-Rejected { Remove-ManagedAutoconfig $legacyProfile $legacyFirefox $false } 'legacy migration claimed local edits'
+            Assert-That ((Get-Content "$legacyProfile/chrome/utils/boot.sys.mjs") -eq 'legacy local edit') 'legacy local edit lost'
+        }
+    }
+
+    # Shared cleanup elevates only the startup-file operation, and checks the result.
+    $script:originalSharedRemoval = (Get-Command Remove-SharedAutoconfig).ScriptBlock
+    foreach ($outcome in @('success', 'cancelled', 'false-success')) {
+        $script:removalProfile = Join-Path $temp "cleanup-elevated-$outcome/profile"
+        $script:removalFirefox = Join-Path $temp "cleanup-elevated-$outcome/Firefox user's install"
+        [IO.Directory]::CreateDirectory($script:removalProfile) | Out-Null
+        [IO.Directory]::CreateDirectory($script:removalFirefox) | Out-Null
+        Set-Content "$script:removalFirefox/firefox.exe" 'fixture'
+        Ensure-Autoconfig $script:removalProfile $script:removalFirefox
+        function Remove-SharedAutoconfig { throw [UnauthorizedAccessException]::new('fixture elevation required') }
+        $script:removalOutcome = $outcome
+        function Start-Process([string]$FilePath, [string]$Verb, [switch]$Wait, [switch]$PassThru, [string[]]$ArgumentList) {
+            Assert-That ($Verb -eq 'RunAs' -and $Wait -and $PassThru) 'cleanup elevation did not wait for completion'
+            $decoded = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($ArgumentList[-1]))
+            Assert-That ($decoded.Contains('-StartupOnly -RemoveSharedAutoconfig') -and -not $decoded.Contains('-ProfilePath') -and
+                $decoded.Contains("Firefox user''s install")) 'cleanup elevated the wrong operation or failed to quote its directory'
+            if ($script:removalOutcome -eq 'cancelled') { throw [ComponentModel.Win32Exception]::new(1223, 'fixture UAC cancelled') }
+            if ($script:removalOutcome -eq 'success') { & $script:originalSharedRemoval $script:removalFirefox }
+            return [pscustomobject]@{ ExitCode = 0 }
+        }
+        try {
+            if ($outcome -eq 'success') {
+                Remove-ManagedAutoconfig $script:removalProfile $script:removalFirefox $true
+                Assert-That (-not (Test-Path "$script:removalProfile/chrome/utils")) 'cleanup did not resume after elevation'
+            } else {
+                $message = ''
+                try { Remove-ManagedAutoconfig $script:removalProfile $script:removalFirefox $true }
+                catch { $message = $_.Exception.Message }
+                Assert-That ($message -ne '') "accepted $outcome cleanup elevation"
+                if ($outcome -eq 'cancelled') {
+                    Assert-That ($message.StartsWith('Shared fx-autoconfig removal failed or elevation was cancelled:') -and
+                        $message.Contains('fixture UAC cancelled')) 'cleanup cancellation lacked actionable context'
+                }
+                Assert-That ((Test-Path "$script:removalProfile/chrome/utils/boot.sys.mjs") -and
+                    (Test-Path "$script:removalFirefox/config.js")) "$outcome cleanup elevation removed loader files"
+            }
+        } finally {
+            Set-Item Function:Remove-SharedAutoconfig -Value $script:originalSharedRemoval
+            Remove-Item Function:Start-Process
+        }
+    }
+
+    # Exercise the elevated shared-cleanup entry point without real UAC.
+    $cleanupChild = Join-Path $temp 'cleanup-child-Firefox'
+    [IO.Directory]::CreateDirectory($cleanupChild) | Out-Null
+    Set-Content "$cleanupChild/firefox.exe" 'fixture'
+    Install-StartupFiles "$fixture/program" $cleanupChild
+    & $interpreter -NoProfile -NonInteractive -File "$childDirectory/install.ps1" -StartupOnly -RemoveSharedAutoconfig -FirefoxDirectory $cleanupChild
+    Assert-That ($LASTEXITCODE -eq 0 -and -not (Test-Path "$cleanupChild/config.js")) 'shared-cleanup child entry point failed'
+
     # Remote launcher: forward options, discard stale status, and clean up on failure.
     $remoteFixture = Join-Path $temp 'remote-fixture/firefox-floating-urlbar-main'
     [IO.Directory]::CreateDirectory($remoteFixture) | Out-Null
     $remoteTrace = Join-Path $temp 'remote-trace.json'
     Set-Content -LiteralPath "$remoteFixture/install.ps1" -Value @'
-param([string]$ProfilePath, [switch]$Uninstall)
-@{ ProfilePath = $ProfilePath; Uninstall = $Uninstall.IsPresent; Directory = $PSScriptRoot } |
+param([string]$ProfilePath, [switch]$Uninstall, [switch]$RemoveSharedAutoconfig)
+@{ ProfilePath = $ProfilePath; Uninstall = $Uninstall.IsPresent; Cleanup = $RemoveSharedAutoconfig.IsPresent; Directory = $PSScriptRoot } |
     ConvertTo-Json | Set-Content -LiteralPath $remoteTrace
 if ($remoteExit) { exit $remoteExit }
 '@
     $remoteArchive = Join-Path $temp 'remote.zip'
     Compress-Archive -LiteralPath $remoteFixture -DestinationPath $remoteArchive
+    $env:FIREFOX_FLOATING_URLBAR_URL = 'https://example.invalid/fixture.zip'
     function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing) {
         Copy-Item -LiteralPath $remoteArchive -Destination $OutFile
     }
@@ -634,10 +850,78 @@ if ($remoteExit) { exit $remoteExit }
         Assert-That ($trace.Uninstall -and $trace.ProfilePath -eq 'temporary profile with spaces') 'remote arguments were not forwarded'
         Assert-That (-not (Test-Path -LiteralPath $trace.Directory)) 'remote launcher left temporary files'
     }
+    $env:FIREFOX_FLOATING_URLBAR_URL = $null
+    $remoteExit = 0
+    $global:floatingUrlbarRemoteDownloads = @()
+    $global:floatingUrlbarRemoteMode = 'string'
+    function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing, [hashtable]$Headers) {
+        if ($Uri -like 'https://api.github.com/*') {
+            Assert-That ($Headers.Accept -eq 'application/vnd.github.sha') 'remote launcher did not request an immutable revision'
+            if ($global:floatingUrlbarRemoteMode -eq 'api-error') { throw 'fixture API failure' }
+            $revision = if ($global:floatingUrlbarRemoteMode -eq 'invalid-revision') { '{"message":"rate limited"}' } else { 'a' * 40 }
+            if ($global:floatingUrlbarRemoteMode -eq 'bytes') { return @{ Content = [Text.Encoding]::UTF8.GetBytes($revision) } }
+            return @{ Content = $revision }
+        }
+        $prefix = "https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/$('a' * 40)/"
+        Assert-That ($Uri.StartsWith($prefix)) 'remote files did not use the resolved commit'
+        $file = $Uri.Substring($prefix.Length)
+        $global:floatingUrlbarRemoteDownloads += $file
+        if ($file -eq 'fx-autoconfig.conf' -and $global:floatingUrlbarRemoteMode -eq 'file-error') { throw 'fixture download failure' }
+        if ($global:floatingUrlbarRemoteMode -eq 'real') { Copy-Item -LiteralPath (Join-Path $repo $file) -Destination $OutFile }
+        elseif ($file -eq 'install.ps1') { Copy-Item "$remoteFixture/install.ps1" $OutFile }
+        else { Set-Content -LiteralPath $OutFile -Value 'fixture' }
+    }
+    foreach ($mode in @('string', 'bytes', 'api-error', 'invalid-revision', 'file-error')) {
+        $global:floatingUrlbarRemoteMode = $mode
+        $global:floatingUrlbarRemoteDownloads = @()
+        Remove-Item -LiteralPath $remoteTrace -ErrorAction SilentlyContinue
+        $before = @(Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'floating-urlbar-remote-*' | ForEach-Object Name)
+        if ($mode -in @('string', 'bytes')) {
+            & "$repo/install-remote.ps1" -Uninstall -RemoveSharedAutoconfig -ProfilePath 'temporary profile with spaces'
+            $trace = Get-Content -LiteralPath $remoteTrace -Raw | ConvertFrom-Json
+            Assert-That ($trace.Cleanup -and $trace.Uninstall -and $trace.ProfilePath -eq 'temporary profile with spaces') 'lean launcher lost cleanup arguments'
+            Assert-That (($global:floatingUrlbarRemoteDownloads -join ',') -eq 'install.ps1,fx-autoconfig.conf,JS/replace-new-tab.uc.js,CSS/firefox-floating-urlbar.uc.css') 'lean launcher downloaded unexpected files'
+        } else {
+            Assert-Rejected { & "$repo/install-remote.ps1" } "accepted $mode"
+            Assert-That (-not (Test-Path -LiteralPath $remoteTrace)) "executed installer after $mode"
+        }
+        $after = @(Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'floating-urlbar-remote-*' | ForEach-Object Name)
+        Assert-That (($before -join ',') -eq ($after -join ',')) "$mode remote launcher left temporary files"
+    }
+    # Execute the actual downloaded script against a temporary external loader.
+    $global:floatingUrlbarRemoteMode = 'real'
+    $realProfile = Join-Path $temp 'remote-real/profile with spaces'
+    $realFirefox = Join-Path $temp 'remote-real/Firefox'
+    [IO.Directory]::CreateDirectory("$realProfile/chrome/utils") | Out-Null
+    [IO.Directory]::CreateDirectory("$realFirefox/defaults/pref") | Out-Null
+    Set-Content -LiteralPath "$realProfile/prefs.js" 'preserve preferences'
+    Set-Content -LiteralPath "$realProfile/chrome/utils/boot.sys.mjs" 'existing external loader'
+    Set-Content -LiteralPath "$realProfile/chrome/utils/chrome.manifest" 'existing manifest'
+    Set-Content -LiteralPath "$realFirefox/firefox.exe" 'fixture'
+    Set-Content -LiteralPath "$realFirefox/config.js" '// existing startup'
+    Set-Content -LiteralPath "$realFirefox/defaults/pref/config-prefs.js" '// existing preferences'
+    & "$repo/install-remote.ps1" -ProfilePath $realProfile -FirefoxDirectory $realFirefox
+    Assert-That ($global:LASTEXITCODE -eq 0) 'real downloaded installer failed'
+    Assert-That ((Get-FileHash -LiteralPath "$realProfile/chrome/JS/replace-new-tab.uc.js").Hash -eq
+        (Get-FileHash -LiteralPath "$repo/JS/replace-new-tab.uc.js").Hash) 'real remote install missed JavaScript'
+    Assert-That ((Get-FileHash -LiteralPath "$realProfile/chrome/CSS/firefox-floating-urlbar.uc.css").Hash -eq
+        (Get-FileHash -LiteralPath "$repo/CSS/firefox-floating-urlbar.uc.css").Hash) 'real remote install missed stylesheet'
+    $state = Join-Path $env:APPDATA 'firefox-floating-urlbar/profile'
+    Assert-That ((Get-Content -LiteralPath $state).Trim() -eq $realProfile) 'real remote install missed saved state'
+    & "$repo/install-remote.ps1" -Uninstall -ProfilePath $realProfile
+    Assert-That ($global:LASTEXITCODE -eq 0) 'real downloaded uninstaller failed'
+    Assert-That (-not (Test-Path -LiteralPath "$realProfile/chrome/JS/replace-new-tab.uc.js") -and
+        -not (Test-Path -LiteralPath "$realProfile/chrome/CSS/firefox-floating-urlbar.uc.css") -and
+        -not (Test-Path -LiteralPath $state)) 'real remote uninstall left payloads or saved state'
+    Assert-That ((Get-Content -LiteralPath "$realProfile/chrome/utils/boot.sys.mjs") -eq 'existing external loader') 'real remote uninstall changed external loader'
+    $after = @(Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'floating-urlbar-remote-*' | ForEach-Object Name)
+    Assert-That (($before -join ',') -eq ($after -join ',')) 'real remote install/uninstall left temporary downloads'
     Write-Host 'PowerShell regressions passed (offline fixtures and temporary installations; no Firefox GUI or UAC-prompt verification).'
 } finally {
     $env:APPDATA = $originalAppData
     $env:LOCALAPPDATA = $originalLocalAppData
+    $env:FIREFOX_FLOATING_URLBAR_URL = $originalRemoteArchive
+    Remove-Variable -Scope Global -Name floatingUrlbarRemoteMode, floatingUrlbarRemoteDownloads -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $temp -Recurse -Force
 }
 # Expected failing child processes must not become the suite's exit code.

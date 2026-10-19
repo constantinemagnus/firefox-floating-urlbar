@@ -116,7 +116,12 @@ choose_profile() {
         while IFS= read -r path; do
             [[ -n "$path" ]] || continue
             names+=("$(basename "$path")"); paths+=("$path"); raws+=("")
-        done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/prefs.js' \; -print | sort)
+        done < <({
+            find "$root" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/prefs.js' \; -print
+            if [[ -d "$root/Profiles" ]]; then
+                find "$root/Profiles" -mindepth 1 -maxdepth 1 -type d -exec test -f '{}/prefs.js' \; -print
+            fi
+        } | sort)
     fi
 
     local default_raw default_idx=-1 i

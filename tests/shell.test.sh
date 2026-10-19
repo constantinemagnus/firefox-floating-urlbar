@@ -26,6 +26,20 @@ printf '[Profile0]\r\nName=Test\r\nIsRelative=0\r\nPath=%s\r\n' "$TEST_DIR/absol
 printf '[Profile0]\r\nName=Test\r\nIsRelative=1\r\nPath=relative\r\n' > "$TEST_DIR/ini/profiles.ini"
 [[ "$(list_profiles_from_ini "$TEST_DIR/ini")" == "Test|$TEST_DIR/ini/relative|relative" ]] || fail "relative CRLF profile"
 
+# Missing or stale profiles.ini must still find macOS-style Profiles/ folders.
+mkdir -p "$TEST_DIR/fallback/Profiles/nested profile" "$TEST_DIR/fallback/unused"
+touch "$TEST_DIR/fallback/Profiles/nested profile/prefs.js"
+choose_profile "$TEST_DIR/fallback" >/dev/null
+[[ "$PROFILE" == "$TEST_DIR/fallback/Profiles/nested profile" ]] || fail "nested profile fallback"
+printf '[Profile0]\nName=Stale\nPath=missing\n' > "$TEST_DIR/fallback/profiles.ini"
+choose_profile "$TEST_DIR/fallback" >/dev/null
+[[ "$PROFILE" == "$TEST_DIR/fallback/Profiles/nested profile" ]] || fail "stale ini nested profile fallback"
+mkdir "$TEST_DIR/fallback/direct profile"
+touch "$TEST_DIR/fallback/direct profile/prefs.js"
+choose_profile "$TEST_DIR/fallback" "$TEST_DIR/fallback/direct profile" <<< '' > "$TEST_DIR/fallback-menu"
+[[ "$PROFILE" == "$TEST_DIR/fallback/direct profile" ]] || fail "mixed direct and nested profile fallback"
+grep -Fq "$TEST_DIR/fallback/Profiles/nested profile" "$TEST_DIR/fallback-menu" || fail "mixed fallback omitted nested profile"
+
 # Both writes deliberately share a timestamp; neither backup may be lost.
 date() { printf '20261009000000\n'; }
 printf 'original' > "$TEST_DIR/destination"
@@ -122,7 +136,7 @@ choose_profile "$choice_root" "$PROFILE_A" <<< '' > "$TEST_DIR/preferred-choice.
 [[ "$PROFILE" -ef "$PROFILE_A" ]] || fail "chooser ignored remembered profile outside discovered root"
 chooser_repo="$TEST_DIR/uninstall-discovery-fixture"
 mkdir -p "$chooser_repo"
-cp "$REPO_DIR/uninstall.sh" "$chooser_repo/"
+cp "$REPO_DIR/uninstall.sh" "$REPO_DIR/autoconfig.sh" "$REPO_DIR/fx-autoconfig.conf" "$chooser_repo/"
 cat "$REPO_DIR/lib.sh" > "$chooser_repo/lib.sh"
 cat >> "$chooser_repo/lib.sh" <<'FIXTURE'
 find_profile_root() {
@@ -421,33 +435,55 @@ printf 'verbose shell case\n'
 printf 'shell stderr diagnostic\n' >&2
 exit "${RUNNER_SHELL_EXIT:-0}"
 SHELL
+cat > "$runner_fixture/tests/package.test.sh" <<'PACKAGE'
+if [[ "${RUNNER_PACKAGE_SKIP:-0}" == 1 ]]; then
+    printf 'SKIP: fixture package suite requires Git metadata.\n'
+    exit 0
+fi
+printf 'verbose package case\n'
+printf 'package stderr diagnostic\n' >&2
+exit "${RUNNER_PACKAGE_EXIT:-0}"
+PACKAGE
 chmod +x "$runner_fixture/bin/node"
-for scenario in pass node-failure shell-failure; do
-    node_exit=0 shell_exit=0 expected_status=0
+for scenario in pass package-skip node-failure shell-failure package-failure; do
+    node_exit=0 shell_exit=0 package_exit=0 package_skip=0 expected_status=0
     case "$scenario" in
+        package-skip) package_skip=1 ;;
         node-failure) node_exit=23 expected_status=23 ;;
         shell-failure) shell_exit=37 expected_status=37 ;;
+        package-failure) package_exit=41 expected_status=41 ;;
     esac
     runner_status=0
     PATH="$runner_fixture/bin:$PATH" TMPDIR="$runner_fixture/logs" \
-        RUNNER_NODE_EXIT="$node_exit" RUNNER_SHELL_EXIT="$shell_exit" \
+        RUNNER_NODE_EXIT="$node_exit" RUNNER_SHELL_EXIT="$shell_exit" RUNNER_PACKAGE_EXIT="$package_exit" \
+        RUNNER_PACKAGE_SKIP="$package_skip" \
         bash "$runner_fixture/tests/run.sh" > "$TEST_DIR/runner.log" 2>&1 || runner_status=$?
     [[ "$runner_status" == "$expected_status" ]] || fail "runner changed $scenario exit code"
     grep -Eq "duration=[0-9]+s exit=$expected_status output=" "$TEST_DIR/runner.log" || fail "runner summary missing"
     while IFS= read -r summary; do
         original_log="${summary#*output=}"
         [[ -f "$original_log" ]] || fail 'runner original log missing'
+        if [[ "$scenario" == package-skip && "$summary" == package:* ]]; then
+            grep -q '^SKIP: fixture package suite requires Git metadata.$' "$original_log" || fail 'runner lost original skip reason'
+            continue
+        fi
         grep -q 'stderr diagnostic' "$original_log" || fail 'runner lost stderr'
         grep -q 'verbose .* case' "$original_log" || fail 'runner lost stdout'
     done < <(sed -n '/output=/p' "$TEST_DIR/runner.log")
-    if [[ "$scenario" == pass ]]; then
+    if [[ "$scenario" == pass || "$scenario" == package-skip ]]; then
         grep -q '^# tests 1$' "$TEST_DIR/runner.log" || fail 'runner lost Node totals'
         grep -q '^# duration_ms 1.25$' "$TEST_DIR/runner.log" || fail 'runner lost Node duration'
         grep -q '^Shell suites: 1 passed$' "$TEST_DIR/runner.log" || fail 'runner lost shell count'
         if grep -Eq 'verbose|stderr diagnostic' "$TEST_DIR/runner.log"; then fail 'runner printed successful cases'; fi
+        if [[ "$scenario" == package-skip ]]; then
+            grep -q '^SKIP: fixture package suite requires Git metadata.$' "$TEST_DIR/runner.log" || fail 'runner hid skip reason'
+            [[ "$(grep -c '^Shell suites: 1 passed$' "$TEST_DIR/runner.log")" == 1 ]] || fail 'runner counted a skipped package suite as passed'
+            grep -Eq '^package: .* exit=0 output=' "$TEST_DIR/runner.log" || fail 'runner omitted skipped suite summary'
+        fi
     else
         failing_suite=node
         [[ "$scenario" == node-failure ]] || failing_suite=shell
+        [[ "$scenario" != package-failure ]] || failing_suite=package
         original_log="$(sed -n "s/^$failing_suite: .*output=//p" "$TEST_DIR/runner.log")"
         diagnostics="$(cat "$original_log")"
         runner_output="$(cat "$TEST_DIR/runner.log")"

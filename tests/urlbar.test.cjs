@@ -6,6 +6,28 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync(path.join(__dirname, "../JS/replace-new-tab.uc.js"), "utf8");
 
+test("floating-state selector agrees with the stylesheet and the mock", () => {
+    const css = fs.readFileSync(path.join(__dirname, "../CSS/firefox-floating-urlbar.uc.css"), "utf8");
+    const selector = source.match(/const CENTERED_SELECTOR = `([^`]+)`;/)[1]
+        .replace(/\$\{(\w+)\}/g, (_, name) => source.match(new RegExp(`const ${name} = "([^"]+)"`))[1]);
+    const cssSelectors = css.match(/\[floatingurlbar-active\]:is\([^)]*\)/g);
+    const normalize = value => value.replace(/\s+/g, "")
+        .replace(/:is\(([^)]+)\)/, (_, states) => `:is(${states.split(",").sort().join(",")})`);
+    assert.ok(cssSelectors?.length > 1, "expected repeated floating-state selectors");
+    for (const cssSelector of cssSelectors) {
+        assert.equal(normalize(cssSelector), normalize(selector));
+    }
+    const s = setup();
+    for (const active of [false, true]) {
+        for (const state of [null, "focused", "popover-open", "floatingurlbar-hold"]) {
+            s.bar.attrs.clear();
+            if (active) s.bar.setAttribute("floatingurlbar-active");
+            if (state) s.bar.setAttribute(state);
+            assert.equal(s.bar.matches(selector), active && state !== null);
+        }
+    }
+});
+
 function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missingCommitAPI = false,
     fallbackResult = Promise.resolve({}), configureUrlbar, prefs = {}, anchorSupport = true, compactControls = false,
     separateSearchBar = null, revealStripHeight = "3px", nativeCaptions = false, missingCaptionBox = false,
@@ -1285,6 +1307,30 @@ test("Escape preserves native handling before Ctrl+T cleanup and captures Ctrl+L
         assert.equal(s.page.focusCalls, 1);
         s.advance(10000);
         assert.equal(s.gURLBar.revertCalls, 1);
+    }
+});
+
+test("cancellation falls back to the raw page URI when native revert APIs disappear or throw", () => {
+    for (const mode of ["missing", "throw-revert", "throw-setURI"]) {
+        for (const newTab of [false, true]) {
+            const s = setup({ configureUrlbar(bar, browser) {
+                browser.selectedBrowser.browsingContext = { currentURI: browser.selectedBrowser.currentURI };
+                delete bar.handleRevert;
+                delete bar.setURI;
+                if (mode === "throw-revert") bar.handleRevert = () => { throw new Error("API changed"); };
+                if (mode === "throw-setURI") bar.setURI = () => { throw new Error("API changed"); };
+            } });
+            if (newTab) s.ctrlT();
+            else s.key("l", { ctrlKey: true }, () => s.input.focus());
+            s.type("abandoned edits");
+            s.key("Escape");
+            assert.equal(s.input.value, s.page.currentURI.spec, `${mode}/${newTab}`);
+            assert.equal(s.active(), false);
+            assert.equal(s.where({}), "current");
+            assert.equal(s.page.focusCalls, 1);
+            s.advance(10000);
+            assert.equal(s.active(), false);
+        }
     }
 });
 

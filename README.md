@@ -45,16 +45,16 @@ If required Firefox APIs are missing, the script logs a Browser Console warning 
 
 Installs the script and stylesheet into your selected profile. If fx-autoconfig is missing, setup also adds `config.js` and `defaults/pref/config-prefs.js` to Firefox's installation directory (affecting all profiles using it) and sets `general.config.sandbox_enabled=false`. Existing loaders are preserved.
 
-Run installers as your normal user; sudo/UAC is requested only for protected startup-file writes. One-command installers fetch current `main` over HTTPS; fx-autoconfig is pinned to the commit in `fx-autoconfig.conf` and SHA-256 verified.
+Run installers as your normal user; sudo/UAC is requested only for protected startup-file changes. One-command installers resolve current `main` once and download only the files needed for your platform, from that commit over HTTPS. Demo assets and tests are excluded. GitHub API failures, including rate limits, stop installation. fx-autoconfig is pinned to the commit in `fx-autoconfig.conf` and SHA-256 verified.
 
 ### Linux and macOS
 
-Arch users can manage fx-autoconfig with a [local pacman package](packaging/fx-autoconfig/README.md).
+Arch users can manage fx-autoconfig with a [local pacman package](https://github.com/constantinemagnus/firefox-floating-urlbar/blob/main/packaging/fx-autoconfig/README.md).
 
 One-command:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.sh)"
+installer=$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.sh) && bash -c "$installer"
 ```
 
 Or locally:
@@ -110,7 +110,7 @@ One-command reruns fetch current source; ZIP users download/extract the newer ZI
 ./update.sh
 ```
 
-Shows incoming commits/files and asks before applying; refuses local edits or a branch ahead of upstream. Options: `--yes`, `--choose`, `--profile`/`--root`. Arch users: see [package update instructions](packaging/fx-autoconfig/README.md#updates-and-removal).
+Shows incoming commits/files and asks before applying; refuses local edits or a branch ahead of upstream. Options: `--yes`, `--choose`, `--profile`/`--root`. Arch users: see [package update instructions](https://github.com/constantinemagnus/firefox-floating-urlbar/blob/main/packaging/fx-autoconfig/README.md#updates-and-removal).
 
 ## Uninstall
 
@@ -127,14 +127,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
 One-command:
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.sh)" -- --uninstall
+installer=$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.sh) && bash -c "$installer" -- --uninstall
 ```
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1))) -Uninstall"
 ```
 
-Selects a profile, suggesting the last installed profile when available; use `--profile DIR` or `-ProfilePath DIR` to skip selection. Removes our two files (backs up edited copies); leaves `prefs.js` untouched and keeps shared fx-autoconfig files (remove them separately only if nothing else uses them). Restart Firefox and clear the startup cache if needed. If an older version changed `browser.urlbar.openintab` and you never set it, reset it in `about:config`.
+Selects a profile, suggesting the last installed profile when available; use `--profile DIR` or `-ProfilePath DIR` to skip selection. Removes our two files, backs up edited copies, and leaves `prefs.js` untouched.
+
+Interactive uninstall offers to remove fx-autoconfig installed by us; the default is to keep it. For unattended cleanup, use `./uninstall.sh --remove-autoconfig` or `install.ps1 -Uninstall -RemoveAutoconfig`. Cleanup requires ownership records and unchanged loader files, and stops if other scripts or styles depend on the loader. Existing and package-managed loaders are preserved.
+
+Shared startup files are a separate choice because they affect **all profiles** using that Firefox installation. Remove them only if no other profile or user needs AutoConfig: `./uninstall.sh --remove-shared-autoconfig --firefox-dir DIR`, or `install.ps1 -Uninstall -RemoveSharedAutoconfig -FirefoxDirectory DIR`. These options also remove our profile loader, and only delete startup files recorded as created by us and still unchanged. Other profiles and users cannot be checked automatically. Protected removals request sudo/UAC.
+
+Older installations lack these ownership records. Rerun the current installer once to record the profile loader against verified upstream files; legacy shared startup files remain unowned and need manual removal after checking other users and profiles. Locally edited loader files are kept.
+
+Restart Firefox and clear the startup cache if needed. If an older version changed `browser.urlbar.openintab` and you never set it, reset it in `about:config`.
 
 ## Preferences (about:config, optional)
 
@@ -212,6 +220,10 @@ bash tests/macos.test.sh # native macOS only
 The Node.js and shell runner prints counts, duration, and exit status on success, and full output on failure. It stops at the first failed suite and returns its exit code. Each run keeps the original output in the printed temporary log paths. Shell tests report one suite because their assertions have no individual case counter. For live, verbose output, run `node --test tests/urlbar.test.cjs` or `bash tests/shell.test.sh` directly.
 
 The [platform workflow](.github/workflows/platform-tests.yml) checks Linux, Windows PowerShell 5.1/7, and macOS Intel/Apple Silicon. Installer tests use temporary profiles and offline fixtures; JavaScript tests mock Firefox. No real profiles are changed.
+
+Before distributing ZIPs, run `bash packaging/build-installers.sh COMMIT_OR_TAG` from a Git checkout. It regenerates `dist/firefox-floating-urlbar.zip`, `.tar.gz`, and `firefox-floating-urlbar-manual.zip` with only the required files and notices, plus `SHA256SUMS` for all three archives. The manual ZIP has `JS/` and `CSS/` directories for the manual installation steps above. Archives contain the selected **committed** revision; uncommitted edits and old local ZIPs are not release inputs. Package tests are skipped when Git metadata is unavailable.
+
+Upload exactly `dist/firefox-floating-urlbar.zip`, `dist/firefox-floating-urlbar.tar.gz`, `dist/firefox-floating-urlbar-manual.zip`, and `dist/SHA256SUMS`. Prepare release notes separately for the selected version; other files already in `dist/` are not regenerated.
 
 Local Windows tests need Developer Mode or administrator rights for symbolic links. Firefox appearance, keyboard behavior, window dragging, and elevation prompts need manual testing.
 
