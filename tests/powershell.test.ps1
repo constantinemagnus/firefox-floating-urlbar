@@ -14,6 +14,15 @@ function Assert-Rejected([scriptblock]$Operation, [string]$Message) {
     try { & $Operation } catch { $rejected = $true }
     Assert-That $rejected $Message
 }
+function Remove-TestDirectoryLink([string]$Path) {
+    if ($env:OS -eq 'Windows_NT') {
+        # Windows PowerShell 5.1 can throw when Remove-Item removes a junction.
+        & $env:ComSpec /d /v:off /c "rmdir `"$($Path.Replace('/', '\'))`""
+        Assert-That ($LASTEXITCODE -eq 0) "Could not remove directory link: $Path"
+    } else {
+        Remove-Item -LiteralPath $Path -Force
+    }
+}
 
 try {
     . "$repo/install.ps1"
@@ -494,12 +503,14 @@ try {
         New-Item -ItemType $linkType -Path "$ProfilePath/startupCache/linked" -Target $outside | Out-Null
         Clear-StartupCache $ProfilePath -WarningVariable cacheWarning
         Assert-That ((Test-Path "$outside/sentinel") -and (Test-Path "$ProfilePath/startupCache") -and $cacheWarning) 'linked child cache was not refused'
-        Remove-Item -LiteralPath "$ProfilePath/startupCache/linked" -Force
+        Remove-TestDirectoryLink "$ProfilePath/startupCache/linked"
+        Assert-That (Test-Path "$outside/sentinel") 'child link cleanup removed target data'
         Remove-Item -LiteralPath "$ProfilePath/startupCache" -Force
         New-Item -ItemType $linkType -Path "$ProfilePath/startupCache" -Target $outside | Out-Null
         Clear-StartupCache $ProfilePath -WarningVariable cacheWarning
         Assert-That ((Test-Path "$outside/sentinel") -and $cacheWarning) 'linked cache root was not refused'
-        Remove-Item -LiteralPath "$ProfilePath/startupCache" -Force
+        Remove-TestDirectoryLink "$ProfilePath/startupCache"
+        Assert-That (Test-Path "$outside/sentinel") 'root link cleanup removed target data'
         [IO.Directory]::CreateDirectory("$ProfilePath/startupCache") | Out-Null
         function Remove-Item { throw [UnauthorizedAccessException]::new('fixture denied') }
         Clear-StartupCache $ProfilePath -WarningVariable cacheWarning
