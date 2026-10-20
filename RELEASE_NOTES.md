@@ -1,22 +1,24 @@
-# Unreleased — Audit fixes
+# v1.5.5 — Installer and keyboard compatibility fixes
 
-- Permit receipt-verified AutoConfig pin upgrades, staging shared startup files and restoring them after reported installation failures.
-- Handle non-Latin Ctrl/Cmd+L and K, inactive compact layouts, profile names containing `|`, closed prompt input, and Firefox ESR/LibreWolf process names.
-- Clear scoped Windows startup caches when Firefox is closed, force removal of read-only payloads, and bound PowerShell download times.
-- Preserve loader metadata during cleanup, lint production shell scripts in CI, and recommend reviewing the full update diff.
+- Ctrl/Cmd+L and Ctrl/Cmd+K now recognize non-Latin keyboard layouts while preserving current-tab navigation, native search-bar behavior, and cancellation.
+- AutoConfig dependency upgrades can replace unchanged startup files verified against their original ownership receipts. Replacements are staged first, and reported installation failures restore the previous files.
+- AutoConfig receipt repair preserves locally edited loader files. Optional cleanup also checks for other `.mjs` customizations and preserves harmless filesystem metadata.
+- Windows install, reinstall, and uninstall clear the selected profile's startup cache when Firefox is closed. Linked caches are refused, with manual cleanup guidance. Uninstall handles read-only payloads, and PowerShell downloads have explicit timeouts.
+- Bash installers recognize Firefox ESR and LibreWolf processes, support profile names and paths containing `|`, explain closed-input profile selection, and cancel update confirmation cleanly on EOF. An absent startup cache no longer produces a warning.
+- Compact field clicks no longer leave an editing marker when the compact layout is inactive. Popup diagnostics avoid unnecessary work when debug logging is disabled.
+- The README is shorter and clarifies installation scope, remote-installer trust, configuration, and uninstall options. Update review guidance includes the full diff, including installers.
+- Regression coverage now includes startup upgrade failures and rollback, non-Latin shortcuts, keyboard capture/bubble ordering, cache/link protections, and Windows junction cleanup. Linux CI also runs ShellCheck.
 
+## Updating
 
-# v1.5.3 — Navigation and installation reliability
+Run `./update.sh` from a Git checkout, or rerun the current installer for one-command and ZIP installations. Restart Firefox afterward; if changes do not appear, use **Clear startup cache** in `about:support`. Existing preferences remain unchanged.
 
-- Search-engine menu actions, including Shift-click, now respect Ctrl+T's new-tab intent while preserving empty-tab reuse and explicit destinations.
-- Compact mode skips toolbar layout work while disabled and responds to preference changes without restarting Firefox.
-- Missing native window-button elements no longer abort compact setup. JavaScript and CSS now share the compact layout dimensions.
-- Installers stage the script and stylesheet before replacing either file and restore previous files after reported replacement failures, avoiding mismatched versions.
-- Added Linux CI and concise regression output with full logs retained for diagnosis.
-- Clarified installation effects, keyboard access, and healthy startup logs. Normalized JavaScript and CSS indentation without behavior changes.
+Shared AutoConfig startup files affect all profiles using that Firefox installation. Edited or unowned shared files remain protected; existing external and package-managed loaders are preserved.
 
-After updating, restart Firefox and clear the startup cache through `about:support` if needed. Existing preferences remain unchanged.
+## Verification and limits
 
-Validation: 99 mocked URL-bar tests, shell/installer regressions, JavaScript and shell syntax, ShellCheck, and whitespace checks passed. Hosted installer checks passed on Linux, Windows PowerShell 5.1/7, and macOS Intel/Apple Silicon. Maintainer-reported live Firefox navigation and keyboard checks passed; formatting preserves the JavaScript syntax tree.
+Local validation passed: 116 mocked URL-bar tests, shell and packaging regressions, offline PowerShell 7 installer tests, ShellCheck, JavaScript and shell syntax, and whitespace checks. Platform CI covers Linux, Windows PowerShell 5.1/7, and macOS Intel/Apple Silicon.
 
-Windows/macOS Firefox UI, Windows remote installation, and UAC prompts remain unverified. Force-killing an installer between file replacements can still require manual recovery from backups.
+A disposable headless Firefox 158 smoke check verified initialization, focus, navigation intent, synthetic non-Latin shortcuts, and Escape using the existing controller API fallback. Visual layouts, physical keyboard dispatch, window dragging, and real sudo/UAC prompts still need manual platform testing.
+
+Rollback handles reported installation failures. Force-killing an installer or losing power between file replacements can still require manual recovery from backups.
