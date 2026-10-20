@@ -1,18 +1,21 @@
 # Firefox Floating URL Bar & Compact Mode
 
-A Zen-style floating URL bar for Firefox. Ctrl+T opens the bar without creating a blank tab; Enter opens your URL or search in a new tab.
+A Zen-style floating URL bar for Firefox.
 
-Optional [compact mode](#compact-mode) puts the address field, toolbar buttons, and pinned extensions above vertical tabs. It is off by default.
+- **Ctrl+T** opens a centered URL bar; Enter opens the result in a new tab.
+- **Ctrl+L** opens the same bar but navigates in the current tab.
+- **Ctrl+K** opens centered search.
+- Optional **compact mode** moves the address field, toolbar buttons, and pinned extensions above vertical tabs.
 
-Uses an [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user script and a stylesheet. No extension or replacement theme needed.
+Uses [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) plus a stylesheet. No extension or replacement theme is required.
 
-## Floating URL bar demo
+## Demo
 
 <p align="center">
   <img src="assets/demo.webp" alt="firefox-floating-urlbar demo" width="800">
 </p>
 
-## Compact mode demo
+### Compact mode
 
 <p align="center">
   <img src="assets/compact-demo.png" alt="Firefox compact mode with window controls, toolbar buttons, and pinned extensions above vertical tabs" width="800">
@@ -25,41 +28,39 @@ Uses an [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) user script
 | Ctrl+T | Centered URL bar; Enter opens the result in a new tab, reusing an empty tab |
 | Ctrl+L | Centered URL bar; Enter navigates in the current tab |
 | Ctrl+K | Centered search in the current tab; a separate search bar stays native outside compact mode |
-| Escape / click away | Cancels editing and restores the current page's address |
-| Click the normal address field | Native editing, suggestions, and search without floating |
-| F6 / Alt+D | Normal Firefox behavior; does not open the floating bar |
-| `+` button, File → New Tab, Ctrl+N (Cmd+N on macOS) | Opens a normal tab or window without activating the centered bar |
+| Escape / click away | Cancels editing and restores the current page address |
+| Click the normal address field | Native Firefox editing, suggestions, and search |
+| F6 / Alt+D | Native Firefox behavior |
+| `+`, File → New Tab, Ctrl+N / Cmd+N | Opens a normal tab or window |
 
-On macOS, use Cmd instead of Ctrl. Firefox's suggestion settings are respected. By default, the floating bar dims the background by 35% and opens without animation.
+On macOS, use Cmd instead of Ctrl. Firefox suggestion and search settings are respected.
 
 ## Requirements
 
-- Firefox with CSS anchor positioning support. Tested on Firefox 157.0.1 on Linux; Windows and macOS UI still need manual testing.
-- [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig), installed automatically when supported or reused if present.
+- Firefox with CSS anchor positioning support.
+- [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig).
 
-If required Firefox APIs are missing, the script logs a Browser Console warning and leaves Ctrl+T native. Without CSS anchor support, the bar stays in the toolbar.
+The installer can set up fx-autoconfig automatically for regular Firefox installs and reuses an existing loader when present. Flatpak/Snap users should install AutoConfig separately first.
 
-> These files run with full browser privileges. Read them before installing.
+> These files run with full browser privileges. Review them before installing.
 
 ## Install
 
-Installs the script and stylesheet into your selected profile. If fx-autoconfig is missing, setup also adds `config.js` and `defaults/pref/config-prefs.js` to Firefox's installation directory (affecting all profiles using it) and sets `general.config.sandbox_enabled=false`. Existing loaders are preserved.
+The installer adds the script and stylesheet to the selected Firefox profile. If needed, it also sets up shared fx-autoconfig startup files and disables the AutoConfig sandbox (`general.config.sandbox_enabled=false`), affecting **all profiles using that Firefox installation**.
 
-Run installers as your normal user; sudo/UAC is requested only for protected startup-file changes. One-command installers resolve current `main` once and download only the files needed for your platform, from that commit over HTTPS. Demo assets and tests are excluded. GitHub API failures, including rate limits, stop installation. fx-autoconfig is pinned to the commit in `fx-autoconfig.conf` and SHA-256 verified.
+Run installers as your normal user. sudo/UAC is requested only when protected Firefox installation files need to be changed.
 
-One-command installation trusts this repository, its maintainers, and GitHub. HTTPS protects transport, and resolving a commit keeps downloaded files consistent; neither independently authenticates the project code. The fx-autoconfig checksum is trusted through this repository too. For review before execution, check out a specific commit or release tag, inspect the full source diff including installers, and run the local installer. Checksums downloaded from the same source do not protect against that source being compromised.
+One-command installation trusts this repository, its maintainers, and GitHub. HTTPS protects downloads in transit; it does not independently authenticate the project code. To review before running, use a local checkout of a specific commit or release tag.
 
-### Linux and macOS
+### Linux / macOS
 
-Arch users can manage fx-autoconfig with a [local pacman package](https://github.com/constantinemagnus/firefox-floating-urlbar/blob/main/packaging/fx-autoconfig/README.md).
-
-One-command:
+One-command install:
 
 ```bash
 installer=$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.sh) && bash -c "$installer"
 ```
 
-Or locally:
+Or clone and run locally:
 
 ```bash
 git clone https://github.com/constantinemagnus/firefox-floating-urlbar.git
@@ -67,67 +68,84 @@ cd firefox-floating-urlbar
 ./install.sh
 ```
 
-Options: `--profile /path/to/profile`, `--root DIR`, `--firefox-dir /path/to/firefox` (on macOS usually `/Applications/Firefox.app/Contents/Resources`). Append options to the paste command as `-- --profile /path/to/profile`. First-time setup needs `curl`, `tar`, and `sha256sum` or `shasum`.
+Useful options:
+
+```text
+--profile /path/to/profile
+--firefox-dir /path/to/firefox
+--root DIR
+```
+
+On macOS, the Firefox directory is usually:
+
+```text
+/Applications/Firefox.app/Contents/Resources
+```
+
+Arch users who prefer package management can use the [local fx-autoconfig package](https://github.com/constantinemagnus/firefox-floating-urlbar/blob/main/packaging/fx-autoconfig/README.md).
 
 ### Windows
 
-Offline installer regressions, including rollback, pass on Windows PowerShell 5.1/7 in CI. Remote network installation and UAC prompts still need manual testing.
-
-One-command:
+One-command install:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm -ErrorAction Stop https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1)))"
 ```
 
-Or locally (PowerShell 5.1 or 7) from the extracted folder:
+Or run locally from an extracted checkout:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-Options: `-ProfilePath 'C:\path\to\profile'`, `-FirefoxDirectory 'C:\Program Files\Mozilla Firefox'`, `-Uninstall`.
+Useful options:
 
-### Notes
+```text
+-ProfilePath 'C:\path\to\profile'
+-FirefoxDirectory 'C:\Program Files\Mozilla Firefox'
+```
 
-- Regular Firefox installs support automatic fx-autoconfig setup; Flatpak/Snap need separate AutoConfig setup first (an existing loader is reused).
-- Restart Firefox; if nothing changes, clear the startup cache in `about:support`.
-- Install and uninstall clear only the selected profile's own `startupCache` when Firefox is closed. Linked or inaccessible caches need the `about:support` fallback; external local-data caches are left alone.
+### Manual install
 
-### Manual (any OS)
+Install [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) first, then:
 
-**Prerequisite:** Install [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) first; copying these files alone does nothing without it.
-
-Once fx-autoconfig is installed:
-
-1. Open `about:support` in Firefox and locate **Profile Folder** (or **Profile Directory**).
-2. Open that folder and copy:
+1. Open `about:support` and locate **Profile Folder** / **Profile Directory**.
+2. Copy:
    - `JS/replace-new-tab.uc.js` → `chrome/JS/`
    - `CSS/firefox-floating-urlbar.uc.css` → `chrome/CSS/`
-3. In `about:support`, click **Clear startup cache** and confirm the restart.
+3. In `about:support`, click **Clear startup cache** and restart Firefox.
+
+### After installing
+
+Restart Firefox. If nothing changes, open `about:support` and use **Clear startup cache**.
 
 ## Update
 
-One-command reruns fetch current source; ZIP users download/extract the newer ZIP, then rerun the installer with the same profile. Rerunning an old extracted copy does not update project files. For a Git checkout:
+For a Git checkout:
 
 ```bash
 ./update.sh
 ```
 
-Shows incoming commits/files and asks before applying; refuses local edits or a branch ahead of upstream. Options: `--yes`, `--choose`, `--profile`/`--root`. Arch users: see [package update instructions](https://github.com/constantinemagnus/firefox-floating-urlbar/blob/main/packaging/fx-autoconfig/README.md#updates-and-removal).
+It shows the incoming changes before applying them and refuses to overwrite local Git edits.
+
+For one-command or ZIP installs, rerun the newer installer.
 
 ## Uninstall
 
-Locally:
+Linux/macOS:
 
 ```bash
 ./uninstall.sh
 ```
 
+Windows:
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Uninstall
 ```
 
-One-command:
+For one-command installations, use:
 
 ```bash
 installer=$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.sh) && bash -c "$installer" -- --uninstall
@@ -137,43 +155,34 @@ installer=$(curl -fsSL https://raw.githubusercontent.com/constantinemagnus/firef
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm -ErrorAction Stop https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.ps1))) -Uninstall"
 ```
 
-Selects a profile, suggesting the last installed profile when available; use `--profile DIR` or `-ProfilePath DIR` to skip selection. Removes our two files, backs up edited copies, and leaves `prefs.js` untouched.
+By default, uninstall removes only this project's script and stylesheet.
 
-Choose how much to remove; the local and one-command uninstallers accept the same options:
+Optional cleanup can also remove fx-autoconfig components installed by this project:
 
-| Cleanup | Bash options | PowerShell options |
+| Cleanup | Bash | PowerShell |
 | --- | --- | --- |
-| Our script and stylesheet; keep fx-autoconfig (default) | None | None |
-| Also remove our profile's fx-autoconfig loader | `--remove-autoconfig` | `-RemoveAutoconfig` |
-| Also remove shared startup files and our profile loader | `--remove-shared-autoconfig --firefox-dir DIR` | `-RemoveSharedAutoconfig -FirefoxDirectory DIR` |
+| Remove profile loader too | `--remove-autoconfig` | `-RemoveAutoconfig` |
+| Remove shared startup files too | `--remove-shared-autoconfig --firefox-dir DIR` | `-RemoveSharedAutoconfig -FirefoxDirectory DIR` |
 
-For one-command uninstall, append Bash options after `--uninstall`. Put PowerShell options after `-Uninstall` inside the quoted `-Command` argument.
+Shared AutoConfig startup files affect **all profiles using that Firefox installation**. Remove them only if no other profile or user needs AutoConfig. The installer refuses cleanup when ownership cannot be verified or files were modified.
 
-Interactive uninstall also offers profile-loader removal; the default is to keep it. Cleanup requires ownership records and unchanged files, and stops if other scripts or styles depend on the loader. Existing and package-managed loaders are preserved. Protected removals request sudo/UAC.
+## Preferences
 
-Shared startup cleanup affects **all profiles** using that Firefox installation. Use it only if no other profile or user needs AutoConfig; other profiles and users cannot be checked automatically. Only startup files recorded as created by us and still unchanged are removed.
-
-Older installations lack these ownership records. Rerun the current installer to restore a missing or damaged profile receipt against verified upstream files; this requires downloading the pinned fx-autoconfig snapshot again. A failed download leaves the existing profile loader and receipt untouched. Legacy shared startup files remain unowned; missing or damaged shared receipts need manual inspection before removal, after checking other users and profiles. Locally edited loader files are kept.
-
-Restart Firefox and clear the startup cache if needed. If an older version changed `browser.urlbar.openintab` and you never set it, reset it in `about:config`.
-
-## Preferences (about:config, optional)
-
-Create these as **Boolean** preferences in `about:config` to override the defaults.
+Create these as **Boolean** preferences in `about:config`:
 
 | Preference | Default | Meaning |
 | --- | --- | --- |
-| `uc.floatingurlbar.enabled` | `true` | Turn all features off or on immediately, without restarting |
-| `uc.floatingurlbar.debug` | `false` | Log script activity to the Browser Console (Ctrl+Shift+J) |
-| `uc.floatingurlbar.animate` | `false` | Animate the floating bar's position and width over 0.3 seconds |
-| `uc.floatingurlbar.dim` | `true` | Dim the background while the bar floats |
-| `uc.floatingurlbar.glass` | `false` | Experimental: translucent floating bar and suggestions with background blur |
-| `uc.floatingurlbar.compact` | `false` | Experimental: compact toolbar above expanded vertical tabs |
-| `uc.floatingurlbar.compact.pins.manual` | `false` | Use Firefox's native pinned-tab height and resize handle instead of fitting rows automatically in compact mode |
+| `uc.floatingurlbar.enabled` | `true` | Enable or disable the customization |
+| `uc.floatingurlbar.debug` | `false` | Log activity to the Browser Console |
+| `uc.floatingurlbar.animate` | `false` | Animate the floating bar |
+| `uc.floatingurlbar.dim` | `true` | Dim the page while floating |
+| `uc.floatingurlbar.glass` | `false` | Experimental translucent appearance |
+| `uc.floatingurlbar.compact` | `false` | Enable compact vertical-tab layout |
+| `uc.floatingurlbar.compact.pins.manual` | `false` | Use Firefox's native pinned-tab sizing |
 
-The master switch preserves your settings. System reduced-motion settings always disable animation.
+System reduced-motion settings disable animation.
 
-To adjust dimming, change `--floatingurlbar-dim-opacity` in `CSS/firefox-floating-urlbar.uc.css` or override it in `userChrome.css`:
+To change background dimming, edit `--floatingurlbar-dim-opacity` in `CSS/firefox-floating-urlbar.uc.css` or add this override to your profile's `chrome/userChrome.css`:
 
 ```css
 :root {
@@ -181,49 +190,69 @@ To adjust dimming, change `--floatingurlbar-dim-opacity` in `CSS/firefox-floatin
 }
 ```
 
-Use a number from `0` to `1` (opaque black). For `userChrome.css` to work, enable `toolkit.legacyUserProfileCustomizations.stylesheets`. Restart Firefox and clear the startup cache after stylesheet changes.
+For `userChrome.css`, enable `toolkit.legacyUserProfileCustomizations.stylesheets` in `about:config`. Restart Firefox and clear the startup cache after stylesheet changes.
 
-### Optional glass appearance
+## Optional glass appearance
 
-Set `uc.floatingurlbar.glass` to `true` in `about:config` for the translucent appearance.
+Set:
+
+```text
+uc.floatingurlbar.glass = true
+```
 
 <p align="center">
-  <img src="assets/glass_look.png" alt="Floating Firefox URL bar with the optional glass appearance" width="800">
+  <img src="assets/glass_look.png" alt="Floating Firefox URL bar with optional glass appearance" width="800">
 </p>
 
 ## Compact mode
 
-Set `uc.floatingurlbar.compact` to `true` in `about:config` and expand vertical tabs on either side. Turn off Firefox's sidebar expand-on-hover setting to use this layout.
+Set:
 
-- **Buttons:** Pinned extensions appear automatically. In **Customize Toolbar**, move other buttons before the address field to add them to the header. Unpinned extensions stay in the Extensions panel.
-- **Editing:** Click the address field to expand it beside the sidebar and navigate in the current tab. Click empty sidebar space to dismiss it. Ctrl+T, Ctrl+L, and Ctrl+K still open the centered bar.
-- **Site controls:** Use the centered bar for search engines, site information, permissions, and sharing indicators; these are hidden in the sidebar field.
-- **Toolbar:** Hold the pointer still near the top edge to reveal it. Right-click empty header space for the toolbar menu. Drag empty header, toolbar, or vertical-tab space to move the window.
-- **Keyboard:** F10 or Alt activates the native menubar on Windows and Linux. Hidden toolbar controls stay out of the Tab order.
-- **Window controls:** On Windows and Linux, they sit above the header when space allows; narrow sidebars keep them in the hover toolbar. macOS keeps its native placement.
-- **Pinned tabs:** Resize automatically, scrolling at 40% of window height. Enable `uc.floatingurlbar.compact.pins.manual` to use Firefox's saved height and resize handle.
+```text
+uc.floatingurlbar.compact = true
+```
 
-Collapsed sidebars, horizontal tabs, fullscreen, and toolbar customization use the normal layout.
+Then use expanded vertical tabs on either side. Disable Firefox's sidebar expand-on-hover setting.
+
+- **Buttons:** Pinned extensions appear automatically. In **Customize Toolbar**, move other buttons before the address field to add them to the compact header.
+- **Editing:** Click the sidebar address field to edit in the current tab. Ctrl+T, Ctrl+L, and Ctrl+K still use the centered bar.
+- **Site controls:** Search engines, site information, permissions, and sharing indicators remain available from the centered bar.
+- **Toolbar:** Hold the pointer still near the top edge to reveal the normal toolbar.
+- **Window dragging:** Drag empty header, toolbar, or vertical-tab space.
+- **Menubar:** F10 or Alt activates the native menubar on Windows/Linux.
+- **Pinned tabs:** Compact mode fits pinned-tab rows automatically. Enable `uc.floatingurlbar.compact.pins.manual` to use Firefox's native saved height and resize handle.
+
+Collapsed sidebars, horizontal tabs, fullscreen, and toolbar customization use the normal Firefox layout.
 
 ## Troubleshooting
 
-- Nothing changed after installing: clear the startup cache (`about:support` → **Clear startup cache**) and restart Firefox. Check that fx-autoconfig is installed correctly.
-- The remote installer hits a GitHub API rate limit: use a local checkout or [manual installation](#manual-any-os), or retry after the limit resets.
-- Ctrl+T behaves normally or Enter opens in the current tab: enable debug logging as described below.
-- The bar looks wrong or isn't centered: disable other URL bar customizations that may conflict.
+**Nothing changed after installing**
 
-To debug, set `uc.floatingurlbar.debug` to `true` in `about:config`, restart Firefox, and open the Browser Console (Ctrl+Shift+J). Include the script's messages and your Firefox version when opening an issue.
+Open `about:support`, click **Clear startup cache**, and restart Firefox.
 
-With the feature enabled, successful initialization logs `wrapped …` and finishes with `loaded`, for example:
+**Ctrl+T behaves normally or navigation goes to the wrong tab**
+
+Set:
 
 ```text
-[Replace New Tab] wrapped whereToOpen
-[Replace New Tab] loaded
+uc.floatingurlbar.debug = true
 ```
 
-Hook names vary by Firefox version, and other messages may appear between these lines. They confirm initialization; navigation still needs testing.
+Restart Firefox and check the Browser Console (`Ctrl+Shift+J`).
 
-## Development checks
+**The bar looks wrong or is not centered**
+
+Disable other URL-bar or toolbar customizations that may conflict.
+
+**Remote installer hits a GitHub API limit**
+
+Use a local checkout or the manual installation method.
+
+When reporting a problem, include your Firefox version and relevant Browser Console messages.
+
+## Development
+
+Run the main regression suites with:
 
 ```bash
 bash tests/run.sh
@@ -231,18 +260,14 @@ pwsh -NoProfile -File tests/powershell.test.ps1
 bash tests/macos.test.sh # native macOS only
 ```
 
-The Node.js and shell runner prints counts, duration, and exit status on success, and full output on failure. It stops at the first failed suite and returns its exit code. Each run keeps the original output in the printed temporary log paths. Shell tests report one suite because their assertions have no individual case counter. For live, verbose output, run `node --test tests/urlbar.test.cjs` or `bash tests/shell.test.sh` directly.
-
-The [platform workflow](.github/workflows/platform-tests.yml) checks Linux, Windows PowerShell 5.1/7, and macOS Intel/Apple Silicon. Installer tests use temporary profiles and offline fixtures; JavaScript tests mock Firefox. No real profiles are changed.
-
-Package tests are skipped when Git metadata is unavailable.
-
-Local Windows tests need Developer Mode or administrator rights for symbolic links. Firefox appearance, keyboard behavior, window dragging, and elevation prompts need manual testing.
+CI covers Linux, Windows PowerShell 5.1/7, and macOS. JavaScript tests mock Firefox internals, so visual behavior, native keyboard handling, window dragging, and elevation prompts still need manual verification.
 
 ## License and attribution
 
-Project code and original documentation are licensed under [MIT](LICENSE). The new-tab replacement was originally adapted from [Natsumi Browser](https://github.com/greeeen-dev/natsumi-browser) (source file: MIT), and the centered URL-bar CSS was adapted from [FlexFox](https://github.com/yuuqilin/FlexFox) (MIT).
+Project code and original documentation are licensed under [MIT](LICENSE).
 
-[fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) by MrOtherGuy remains under MPL-2.0. Standalone installs keep its license and pinned source URL in `chrome/utils/fx-autoconfig.LICENSE` and `chrome/utils/fx-autoconfig.txt`; the Arch package includes them under `/usr/share/licenses/fx-autoconfig/` and `/usr/share/doc/fx-autoconfig/`. See [ATTRIBUTION.md](ATTRIBUTION.md) for full notices.
+The new-tab replacement was originally adapted from [Natsumi Browser](https://github.com/greeeen-dev/natsumi-browser) (MIT), and the centered URL-bar CSS was adapted from [FlexFox](https://github.com/yuuqilin/FlexFox) (MIT).
 
-Third-party imagery, website content, logos, and trademarks shown in the demo captures retain their respective rights and are not covered by the project's MIT license. See [ATTRIBUTION.md](ATTRIBUTION.md#demo-imagery-and-website-content).
+[fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) by MrOtherGuy remains under MPL-2.0. See [ATTRIBUTION.md](ATTRIBUTION.md) for full notices.
+
+Third-party imagery, website content, logos, and trademarks shown in demo captures retain their respective rights and are not covered by this project's MIT license.
