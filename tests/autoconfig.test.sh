@@ -139,17 +139,18 @@ for receipt_state in empty truncated; do
     [[ ! -e "$case_firefox/config.js" && ! -e "$case_firefox/.floating-urlbar-autoconfig" ]] || fail "$receipt_state shared receipt was not recovered"
 done
 
-# Reinstall repairs receipt structure using upstream hashes, never local edits.
-for receipt_state in missing empty truncated invalid duplicate edited edited-module; do
+# Reinstall repairs receipts using upstream hashes, never local edits.
+for receipt_state in missing empty truncated invalid duplicate wrong-hashes edited edited-module edited-complete; do
     make_case "profile-receipt-$receipt_state"
     run_install
     receipt="$case_profile/chrome/utils/.floating-urlbar-files"
     case "$receipt_state" in
         missing) rm "$receipt" ;;
         empty) : > "$receipt" ;;
-        truncated|edited*) head -n 6 "$receipt" > "$TEST_DIR/partial"; cp "$TEST_DIR/partial" "$receipt" ;;
+        truncated|edited|edited-module) head -n 6 "$receipt" > "$TEST_DIR/partial"; cp "$TEST_DIR/partial" "$receipt" ;;
         invalid) printf 'invalid receipt' > "$receipt" ;;
         duplicate) head -n 1 "$receipt" >> "$receipt" ;;
+        wrong-hashes) awk '{ printf "%064d %s\n", 0, $2 }' "$receipt" > "$TEST_DIR/partial"; cp "$TEST_DIR/partial" "$receipt" ;;
     esac
     edited_file=boot.sys.mjs
     if [[ "$receipt_state" == edited-module ]]; then edited_file=fs.sys.mjs; fi
@@ -270,7 +271,7 @@ if TEST_FIREFOX_RUNNING=1 run_uninstall --remove-autoconfig; then fail 'unowned 
 [[ ! -e "$XDG_CONFIG_HOME/firefox-floating-urlbar/profile" && ! -e "$case_profile/startupCache" ]] || fail 'cleanup refusal skipped uninstall housekeeping'
 [[ -f "$case_profile/chrome/utils/boot.sys.mjs" && -f "$case_firefox/config.js" ]] || fail 'cleanup refusal removed unowned loader'
 
-for cleanup in keep profile shared edited other-script other-style linked-native other-utils external shared-edited shared-unowned malformed linked hardlinked; do
+for cleanup in keep profile shared edited other-script other-uc-mjs other-sys-mjs other-style linked-native other-utils external shared-edited shared-unowned malformed linked hardlinked; do
     make_case "cleanup-$cleanup"
     if [[ "$cleanup" == shared-unowned ]]; then
         mkdir -p "$case_firefox/defaults/pref"
@@ -295,6 +296,8 @@ for cleanup in keep profile shared edited other-script other-style linked-native
             case "$cleanup" in
                 edited) printf 'local loader edit\n' > "$case_profile/chrome/utils/boot.sys.mjs" ;;
                 other-script) printf 'other script\n' > "$case_profile/chrome/JS/other.uc.js" ;;
+                other-uc-mjs) printf 'other module\n' > "$case_profile/chrome/JS/other.uc.mjs" ;;
+                other-sys-mjs) printf 'other module\n' > "$case_profile/chrome/JS/other.sys.mjs" ;;
                 other-style) printf 'nested style\n' > "$case_profile/chrome/CSS/userChrome.css" ;;
                 linked-native) ln -s "$fixture/program/config.js" "$case_profile/chrome/userChrome.css" ;;
                 other-utils) printf 'other module\n' > "$case_profile/chrome/utils/other.sys.mjs" ;;
@@ -304,6 +307,9 @@ for cleanup in keep profile shared edited other-script other-style linked-native
                 linked) rm "$case_profile/chrome/utils/boot.sys.mjs"; ln -s "$fixture/profile/chrome/utils/boot.sys.mjs" "$case_profile/chrome/utils/boot.sys.mjs" ;;
                 hardlinked) rm "$case_profile/chrome/utils/boot.sys.mjs"; ln "$fixture/profile/chrome/utils/boot.sys.mjs" "$case_profile/chrome/utils/boot.sys.mjs" ;;
             esac
+            if [[ "$cleanup" == other-*-mjs ]]; then
+                if run_uninstall --remove-autoconfig; then fail "unsafe $cleanup profile cleanup succeeded"; fi
+            fi
             if run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"; then fail "unsafe $cleanup cleanup succeeded"; fi
             [[ -e "$case_profile/chrome/utils/chrome.manifest" && -e "$case_firefox/config.js" ]] || fail "$cleanup cleanup partially removed loader"
             ;;
@@ -456,7 +462,8 @@ for notice in fx-autoconfig.LICENSE fx-autoconfig.txt; do
 done
 downloads_before="$(wc -l < "$TEST_DOWNLOAD_TRACE")"
 run_install
-(( $(wc -l < "$TEST_DOWNLOAD_TRACE") == downloads_before )) || fail 'repaired install downloaded again'
+(( $(wc -l < "$TEST_DOWNLOAD_TRACE") == downloads_before + 1 )) || fail 'edited loader did not trigger receipt verification'
+[[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'preserve local loader edit' ]] || fail 'receipt verification changed edited loader'
 [[ "$(cat "$case_profile/prefs.js")" == 'unchanged prefs' ]] || fail 'startup repair changed prefs'
 
 # Repair keeps the same checksum and conflict protections as first-time setup.

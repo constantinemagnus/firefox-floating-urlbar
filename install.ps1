@@ -277,7 +277,7 @@ function Write-AutoconfigReceipt([string]$Receipt, [string]$Base, [string[]]$Fil
     Set-Content -LiteralPath $Receipt -Value $lines -Encoding ASCII
 }
 
-function Assert-AutoconfigReceipt([string]$Receipt, [string]$Base, [string[]]$Files, [switch]$StructureOnly) {
+function Assert-AutoconfigReceipt([string]$Receipt, [string]$Base, [string[]]$Files) {
     $recovery = if ([IO.Path]::GetFileName($Receipt) -eq '.floating-urlbar-autoconfig') {
         'Shared startup ownership cannot be restored by reinstalling; inspect these files manually after checking other profiles and users.'
     } else {
@@ -294,7 +294,7 @@ function Assert-AutoconfigReceipt([string]$Receipt, [string]$Base, [string[]]$Fi
         $seen += $file
         $path = Join-Path $Base $file
         Assert-Destination $path
-        if (-not $StructureOnly -and (Test-Path -LiteralPath $path) -and (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $hash) {
+        if ((Test-Path -LiteralPath $path) -and (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $hash) {
             throw "Locally changed fx-autoconfig file; keeping the loader: $path"
         }
     }
@@ -357,7 +357,7 @@ function Remove-ManagedAutoconfig([string]$SelectedProfile, [string]$ExplicitDir
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Linked customization; keeping fx-autoconfig: $($item.FullName)" }
             $nativeStyle = -not $item.PSIsContainer -and [string]::Equals($item.DirectoryName, $chromePath, [StringComparison]::OrdinalIgnoreCase) -and
                 $item.Name -cin @('userChrome.css', 'userContent.css')
-            if (-not $item.PSIsContainer -and -not $nativeStyle -and -not [string]::Equals($item.DirectoryName, $utilsPath, [StringComparison]::OrdinalIgnoreCase) -and $item.Extension -in @('.js', '.css')) {
+            if (-not $item.PSIsContainer -and -not $nativeStyle -and -not [string]::Equals($item.DirectoryName, $utilsPath, [StringComparison]::OrdinalIgnoreCase) -and $item.Extension -in @('.js', '.mjs', '.css')) {
                 throw "Other customization found; keeping fx-autoconfig: $($item.FullName)"
             }
         }
@@ -416,7 +416,7 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
     $files = @('chrome.manifest') + $AutoconfigModules + @('fx-autoconfig.LICENSE', 'fx-autoconfig.txt')
     $receiptComplete = $false
     try {
-        Assert-AutoconfigReceipt "$utils/.floating-urlbar-files" $utils $files -StructureOnly
+        Assert-AutoconfigReceipt "$utils/.floating-urlbar-files" $utils $files
         $receiptComplete = $true
     } catch { }
     $complete = @(@('chrome.manifest') + $AutoconfigModules | Where-Object {

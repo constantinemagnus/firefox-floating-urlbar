@@ -117,7 +117,7 @@ write_autoconfig_receipt() {
 
 # Receipts never authorize arbitrary paths, links, or removal of edited files.
 check_autoconfig_receipt() {
-    local receipt="$1" base="$2" allowed="$3" verify="${4:-1}" hash file extra seen=" "
+    local receipt="$1" base="$2" allowed="$3" hash file extra seen=" "
     local recovery="Reinstall to restore a managed profile receipt using verified upstream files; locally edited files remain protected."
     if [[ "${receipt##*/}" == .floating-urlbar-autoconfig ]]; then
         recovery="Shared startup ownership cannot be restored by reinstalling; inspect these files manually after checking other profiles and users."
@@ -132,7 +132,7 @@ check_autoconfig_receipt() {
         [[ "$seen" != *" $file "* ]] || die "Duplicate fx-autoconfig ownership entry: $file"
         seen="$seen$file "
         require_file_destination "$base/$file"
-        if (( verify )) && [[ -f "$base/$file" ]]; then
+        if [[ -f "$base/$file" ]]; then
             [[ "$(autoconfig_sha256 "$base/$file")" == "$hash" ]] ||
                 die "Locally changed fx-autoconfig file; keeping the loader: $base/$file"
         fi
@@ -177,7 +177,7 @@ remove_autoconfig() {
     local other=""
     if [[ -d "$profile/chrome" ]]; then
         other="$(cd -- "$profile/chrome" && find . -path ./utils -prune -o \( -type l -o \
-            \( -type f \( -iname '*.js' -o -iname '*.css' \) ! -path ./userChrome.css ! -path ./userContent.css \) \) -print)" ||
+            \( -type f \( -iname '*.js' -o -iname '*.mjs' -o -iname '*.css' \) ! -path ./userChrome.css ! -path ./userContent.css \) \) -print)" ||
             die "Cannot inspect other customizations; keeping fx-autoconfig."
     fi
     [[ -z "$other" ]] || die "Other customization found; keeping fx-autoconfig: $other"
@@ -229,8 +229,7 @@ ensure_autoconfig() (
     require_directory_destination "$profile/chrome/resources"
     require_file_destination "$marker"
     require_file_destination "$utils/.floating-urlbar-files"
-    # Reinstall checks structure; removal still verifies every local file's hash.
-    if (check_autoconfig_receipt "$utils/.floating-urlbar-files" "$utils" "$files" 0) 2>/dev/null; then receipt_complete=1; fi
+    if (check_autoconfig_receipt "$utils/.floating-urlbar-files" "$utils" "$files") 2>/dev/null; then receipt_complete=1; fi
     for file in chrome.manifest "${modules[@]}"; do
         [[ -f "$utils/$file" ]] || complete=0
     done

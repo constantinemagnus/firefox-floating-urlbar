@@ -470,7 +470,8 @@ try {
     }
     $downloadsBefore = $script:downloads
     Ensure-Autoconfig $repairProfile $repairFirefox
-    Assert-That ($script:downloads -eq $downloadsBefore) 'repaired install downloaded again'
+    Assert-That ($script:downloads -eq $downloadsBefore + 1) 'edited loader did not trigger receipt verification'
+    Assert-That ((Get-Content "$repairProfile/chrome/utils/boot.sys.mjs") -eq 'preserve local loader edit') 'receipt verification changed edited loader'
     Assert-That ((Get-Content "$repairProfile/prefs.js") -eq 'preserve preferences') 'startup repair changed preferences'
 
     Remove-Item "$repairFirefox/config.js"
@@ -626,7 +627,7 @@ try {
             -not (Test-Path -LiteralPath $receipt)) "$receiptState shared receipt was not recovered"
     }
 
-    foreach ($receiptState in @('empty', 'truncated', 'invalid', 'duplicate', 'edited', 'edited-module', 'lowercase')) {
+    foreach ($receiptState in @('empty', 'truncated', 'invalid', 'duplicate', 'wrong-hashes', 'edited', 'edited-module', 'edited-complete', 'lowercase')) {
         $recoveryProfile = Join-Path $temp "profile-receipt-$receiptState/profile"
         $recoveryFirefox = Join-Path $temp "profile-receipt-$receiptState/Firefox"
         [IO.Directory]::CreateDirectory($recoveryFirefox) | Out-Null
@@ -640,6 +641,8 @@ try {
             'truncated' { Set-Content -LiteralPath $receipt -Value $lines[0..5] }
             'invalid' { Set-Content -LiteralPath $receipt -Value 'invalid receipt' }
             'duplicate' { Add-Content -LiteralPath $receipt -Value $lines[0] }
+            'wrong-hashes' { Set-Content -LiteralPath $receipt -Value ($lines | ForEach-Object { ('0' * 64) + $_.Substring(64) }) }
+            'edited-complete' { Set-Content "$recoveryProfile/chrome/utils/$editedFile" 'preserve local edit' }
             { $_ -in @('edited', 'edited-module') } {
                 Set-Content -LiteralPath $receipt -Value $lines[0..5]
                 Set-Content "$recoveryProfile/chrome/utils/$editedFile" 'preserve local edit'
@@ -648,7 +651,7 @@ try {
         }
         Ensure-Autoconfig $recoveryProfile $recoveryFirefox
         Assert-That (@(Get-Content -LiteralPath $receipt).Count -eq 8) "$receiptState profile receipt was not repaired"
-        if ($receiptState -in @('edited', 'edited-module')) {
+        if ($receiptState -like 'edited*') {
             Assert-Rejected { Remove-ManagedAutoconfig $recoveryProfile $recoveryFirefox $false } 'receipt repair claimed local edit'
             Assert-Rejected { Remove-ManagedAutoconfig $recoveryProfile $recoveryFirefox $true } 'receipt repair bypassed shared cleanup safeguards'
             Assert-That ((Get-Content "$recoveryProfile/chrome/utils/$editedFile") -eq 'preserve local edit') 'receipt repair lost local edit'
@@ -760,7 +763,7 @@ try {
     }
 
     # Cleanup requires ownership, unchanged files, and no dependent customization.
-    foreach ($cleanup in @('profile', 'shared', 'edited', 'other-script', 'other-style', 'linked-native', 'other-utils', 'external', 'shared-edited', 'shared-unowned', 'malformed', 'linked', 'hardlinked')) {
+    foreach ($cleanup in @('profile', 'shared', 'edited', 'other-script', 'other-uc-mjs', 'other-sys-mjs', 'other-style', 'linked-native', 'other-utils', 'external', 'shared-edited', 'shared-unowned', 'malformed', 'linked', 'hardlinked')) {
         $cleanupProfile = Join-Path $temp "cleanup-$cleanup/profile"
         $cleanupFirefox = Join-Path $temp "cleanup-$cleanup/Firefox"
         [IO.Directory]::CreateDirectory($cleanupProfile) | Out-Null
@@ -787,6 +790,8 @@ try {
                 switch ($cleanup) {
                     'edited' { Set-Content "$cleanupProfile/chrome/utils/boot.sys.mjs" 'local edit' }
                     'other-script' { Set-Content "$cleanupProfile/chrome/JS/other.uc.js" 'other script' }
+                    'other-uc-mjs' { Set-Content "$cleanupProfile/chrome/JS/other.uc.mjs" 'other module' }
+                    'other-sys-mjs' { Set-Content "$cleanupProfile/chrome/JS/other.sys.mjs" 'other module' }
                     'other-style' { Set-Content "$cleanupProfile/chrome/CSS/userChrome.css" 'nested style' }
                     'linked-native' { New-Item -ItemType SymbolicLink -Path "$cleanupProfile/chrome/userChrome.css" -Target "$fixture/program/config.js" | Out-Null }
                     'other-utils' { Set-Content "$cleanupProfile/chrome/utils/other.sys.mjs" 'other module' }
@@ -801,6 +806,9 @@ try {
                         Remove-Item "$cleanupProfile/chrome/utils/boot.sys.mjs"
                         New-Item -ItemType HardLink -Path "$cleanupProfile/chrome/utils/boot.sys.mjs" -Target "$fixture/profile/chrome/utils/boot.sys.mjs" | Out-Null
                     }
+                }
+                if ($cleanup -like 'other-*-mjs') {
+                    Assert-Rejected { Remove-ManagedAutoconfig $cleanupProfile $cleanupFirefox $false } "unsafe $cleanup profile cleanup succeeded"
                 }
                 Assert-Rejected { Remove-ManagedAutoconfig $cleanupProfile $cleanupFirefox $true } "unsafe $cleanup cleanup succeeded"
                 Assert-That ((Test-Path "$cleanupProfile/chrome/utils/chrome.manifest") -and (Test-Path "$cleanupFirefox/config.js")) "$cleanup cleanup partially removed loader"
