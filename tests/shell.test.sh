@@ -22,9 +22,28 @@ if (cd "$TEST_DIR/caller"; load_saved_profile); then fail "ambiguous legacy rela
 # Normalize CRLF before comparing IsRelative, including paths with spaces.
 mkdir -p "$TEST_DIR/ini" "$TEST_DIR/absolute profile"
 printf '[Profile0]\r\nName=Test\r\nIsRelative=0\r\nPath=%s\r\n' "$TEST_DIR/absolute profile" > "$TEST_DIR/ini/profiles.ini"
-[[ "$(list_profiles_from_ini "$TEST_DIR/ini")" == "Test|$TEST_DIR/absolute profile|$TEST_DIR/absolute profile" ]] || fail "absolute CRLF profile"
+[[ "$(list_profiles_from_ini "$TEST_DIR/ini" | tr '\0' '\n')" == "$(printf '%s\n' Test "$TEST_DIR/absolute profile" "$TEST_DIR/absolute profile")" ]] || fail "absolute CRLF profile"
 printf '[Profile0]\r\nName=Test\r\nIsRelative=1\r\nPath=relative\r\n' > "$TEST_DIR/ini/profiles.ini"
-[[ "$(list_profiles_from_ini "$TEST_DIR/ini")" == "Test|$TEST_DIR/ini/relative|relative" ]] || fail "relative CRLF profile"
+[[ "$(list_profiles_from_ini "$TEST_DIR/ini" | tr '\0' '\n')" == "$(printf '%s\n' Test "$TEST_DIR/ini/relative" relative)" ]] || fail "relative CRLF profile"
+
+mkdir -p "$TEST_DIR/ini/Work|Personal" "$TEST_DIR/ini/other"
+mkdir -p "$TEST_DIR/ini/Work|Personal/chrome/utils"
+touch "$TEST_DIR/ini/Work|Personal/chrome/utils/boot.sys.mjs" "$TEST_DIR/ini/Work|Personal/chrome/utils/chrome.manifest"
+touch "$TEST_DIR/ini/Work|Personal/prefs.js" "$TEST_DIR/ini/other/prefs.js"
+printf '[Profile0]\nName=Work|Personal\nPath=Work|Personal\n[Profile1]\nName=Other\nPath=other\n' > "$TEST_DIR/ini/profiles.ini"
+choose_profile "$TEST_DIR/ini" <<< 1 > "$TEST_DIR/pipe-menu"
+[[ "$PROFILE" == "$TEST_DIR/ini/Work|Personal" ]] || fail 'pipe in profile path corrupted'
+grep -Fq 'Work|Personal' "$TEST_DIR/pipe-menu" || fail 'pipe in profile name corrupted'
+if (choose_profile "$TEST_DIR/ini" </dev/null) > "$TEST_DIR/eof.log" 2>&1; then fail 'profile EOF accepted'; fi
+grep -q 'No profile selected.*--profile' "$TEST_DIR/eof.log" || fail 'profile EOF explanation missing'
+for script in install.sh uninstall.sh; do
+    printf '1\n' | bash "$REPO_DIR/$script" --root "$TEST_DIR/ini" > "$TEST_DIR/pipe-$script.log" 2>&1
+    grep -Fq 'Work|Personal' "$TEST_DIR/pipe-$script.log" || fail "$script lost pipe profile"
+done
+
+for process in firefox-esr librewolf librewolf-bin; do
+    (pgrep() { [[ "$*" == "-x $process" ]]; }; firefox_running) || fail "missed $process process"
+done
 
 # Missing or stale profiles.ini must still find macOS-style Profiles/ folders.
 mkdir -p "$TEST_DIR/fallback/Profiles/nested profile" "$TEST_DIR/fallback/unused"
@@ -329,6 +348,7 @@ printf 'ordinary file' > "$cache_a/startupCache"
 if safe_clear_cache "$cache_a" > "$TEST_DIR/cache.log" 2>&1; then fail "accepted non-directory cache"; fi
 [[ "$(cat "$cache_a/startupCache")" == 'ordinary file' ]] || fail "deleted non-directory cache"
 rm "$cache_a/startupCache"
+safe_clear_cache "$cache_a" || fail 'absent cache reported failure'
 mkdir "$cache_a/startupCache"
 for failure in nonzero no-removal; do
     if (
@@ -344,7 +364,11 @@ done
 # caches. The profile is disposable; no external cache path should be touched.
 printf '#!/bin/sh\nexit 1\n' > "$TEST_DIR/bin/pgrep"
 bash "$REPO_DIR/install.sh" --profile "$PROFILE_A" > "$TEST_DIR/cache-guidance.log" 2>&1
+if grep -q 'Startup cache not cleared automatically' "$TEST_DIR/cache-guidance.log"; then fail 'absent cache produced warning'; fi
+ln -s "$TEST_DIR/outside-cache" "$PROFILE_A/startupCache"
+bash "$REPO_DIR/install.sh" --profile "$PROFILE_A" > "$TEST_DIR/cache-guidance.log" 2>&1
 grep -q 'Startup cache not cleared automatically.*about:support' "$TEST_DIR/cache-guidance.log" || fail "missing cache guidance"
+rm "$PROFILE_A/startupCache"
 printf '#!/bin/sh\nexit 0\n' > "$TEST_DIR/bin/pgrep"
 
 # Exercise update.sh with an isolated Git stand-in: upstream advances from
@@ -405,6 +429,12 @@ check_update
 [[ "$(sed -n '2,3p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --profile "$PROFILE_A")" ]] || fail "default saved profile not reused"
 check_update --choose
 (( $(wc -l < "$TEST_INSTALL_TRACE") == 1 )) || fail "choose reused saved profile"
+grep -q 'git diff aaaaa bbbbb$' "$TEST_DIR/update.log" || fail 'update review omitted installer changes'
+rm -f -- "$TEST_GIT_TRACE" "$TEST_INSTALL_TRACE" "$TEST_UPSTREAM_QUERIED"
+bash "$TEST_DIR/updater/update.sh" </dev/null > "$TEST_DIR/update-eof.log" 2>&1
+grep -q 'Cancelled (input closed)' "$TEST_DIR/update-eof.log" || fail 'update EOF explanation missing'
+[[ ! -e "$TEST_INSTALL_TRACE" ]] || fail 'update EOF installed changes'
+if grep -q '^merge ' "$TEST_GIT_TRACE"; then fail 'update EOF merged changes'; fi
 check_update --firefox-dir '/temporary Firefox'
 [[ "$(sed -n '2,3p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --firefox-dir '/temporary Firefox')" ]] || fail "Firefox directory not forwarded"
 [[ "$(sed -n '4,5p' "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' --profile "$PROFILE_A")" ]] || fail "Firefox directory suppressed saved profile"

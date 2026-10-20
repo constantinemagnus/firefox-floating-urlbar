@@ -64,6 +64,9 @@ make_case() {
 run_install() {
     bash "$TEST_DIR/checkout/install.sh" --profile "$case_profile" --firefox-dir "$case_firefox" > "$TEST_DIR/install.log" 2>&1
 }
+run_uninstall() {
+    bash "$TEST_DIR/checkout/uninstall.sh" --profile "$case_profile" "$@" </dev/null > "$TEST_DIR/uninstall.log" 2>&1
+}
 
 make_case fresh
 run_install
@@ -77,6 +80,57 @@ grep -q 'https://github.com/MrOtherGuy/fx-autoconfig/tree/fixture' "$case_profil
 run_install
 (( $(wc -l < "$TEST_DOWNLOAD_TRACE") == 1 )) || fail 'downloaded again on unchanged reinstall'
 [[ -f "$case_profile/chrome/utils/.floating-urlbar-files" && -f "$case_firefox/.floating-urlbar-autoconfig" ]] || fail 'ownership records missing'
+
+# A changed upstream pin may replace only receipt-verified shared startup files.
+cp "$TEST_DIR/checkout/fx-autoconfig.conf" "$TEST_DIR/pin-a"
+cp -R "$fixture" "$TEST_DIR/source/fx-autoconfig-next"
+printf '// next startup\n' > "$TEST_DIR/source/fx-autoconfig-next/program/config.js"
+printf 'pref("general.config.filename", "config.js"); // next\n' > "$TEST_DIR/source/fx-autoconfig-next/program/defaults/pref/config-prefs.js"
+tar -czf "$TEST_DIR/next.tar.gz" -C "$TEST_DIR/source" fx-autoconfig-next
+printf 'AUTOCONFIG_COMMIT=next\nAUTOCONFIG_TAR_SHA256=%s\n' \
+    "$(source "$REPO_DIR/autoconfig.sh"; autoconfig_sha256 "$TEST_DIR/next.tar.gz")" > "$TEST_DIR/pin-b"
+mkdir "$TEST_DIR/startup-failure-bin"
+export TEST_STARTUP_REAL_INSTALL TEST_STARTUP_REAL_MV
+TEST_STARTUP_REAL_INSTALL="$(command -v install)"
+TEST_STARTUP_REAL_MV="$(command -v mv)"
+cat > "$TEST_DIR/startup-failure-bin/install" <<'INSTALL'
+#!/usr/bin/env bash
+if [[ "${TEST_STARTUP_FAILURE:-}" == stage && "${*: -1}" == */.floating-urlbar-startup.*/new-1 ]]; then exit 13; fi
+exec "$TEST_STARTUP_REAL_INSTALL" "$@"
+INSTALL
+cat > "$TEST_DIR/startup-failure-bin/mv" <<'MV'
+#!/usr/bin/env bash
+src="${@: -2:1}"
+if [[ "${TEST_STARTUP_FAILURE:-}" == replace && "$src" == */.floating-urlbar-startup.*/new-1 ]] ||
+   [[ "${TEST_STARTUP_FAILURE:-}" == receipt && "$src" == */.floating-urlbar-startup.*/new-2 ]]; then exit 13; fi
+exec "$TEST_STARTUP_REAL_MV" "$@"
+MV
+chmod +x "$TEST_DIR/startup-failure-bin/"*
+for state in owned edited unowned fresh; do
+    for phase in stage replace receipt success; do
+        cp "$TEST_DIR/pin-a" "$TEST_DIR/checkout/fx-autoconfig.conf"
+        make_case "pin-$state-$phase"
+        if [[ "$state" != fresh ]]; then run_install; fi
+        if [[ "$state" == edited ]]; then printf '// user edit\n' > "$case_firefox/config.js"; fi
+        if [[ "$state" == unowned ]]; then rm "$case_firefox/.floating-urlbar-autoconfig"; fi
+        cp -R "$case_firefox" "$TEST_DIR/before-$state-$phase"
+        cp "$TEST_DIR/pin-b" "$TEST_DIR/checkout/fx-autoconfig.conf"
+        if TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/next.tar.gz" TEST_STARTUP_FAILURE="$phase" PATH="$TEST_DIR/startup-failure-bin:$PATH" run_install; then
+            [[ "$phase" == success && ( "$state" == owned || "$state" == fresh ) ]] || fail "unsafe pin upgrade succeeded: $state/$phase"
+            cmp "$TEST_DIR/source/fx-autoconfig-next/program/config.js" "$case_firefox/config.js" || fail 'pin upgrade kept old startup'
+            run_uninstall --remove-shared-autoconfig --firefox-dir "$case_firefox"
+        else
+            [[ "$phase" != success || "$state" == edited || "$state" == unowned ]] || fail 'owned pin upgrade failed'
+            for file in config.js defaults/pref/config-prefs.js .floating-urlbar-autoconfig; do
+                if [[ -f "$TEST_DIR/before-$state-$phase/$file" ]]; then
+                    cmp "$TEST_DIR/before-$state-$phase/$file" "$case_firefox/$file" || fail "startup rollback lost $file"
+                else [[ ! -e "$case_firefox/$file" ]] || fail "startup rollback left $file"; fi
+            done
+        fi
+        if compgen -G "$case_firefox/.floating-urlbar-startup.*" >/dev/null; then fail 'startup staging leaked'; fi
+    done
+done
+cp "$TEST_DIR/pin-a" "$TEST_DIR/checkout/fx-autoconfig.conf"
 
 # Exercise the real non-writable-directory branch without real privileges.
 make_case sudo-path
@@ -95,21 +149,11 @@ chmod +x "$TEST_DIR/recording-sudo/sudo"
 chmod u-w "$case_firefox"
 if [[ ! -w "$case_firefox" ]]; then
     PATH="$TEST_DIR/recording-sudo:$PATH" run_install
-    # Source directories are random; validate every argument and the copy order.
+    # Source directories are random; validate staging before the first live rename.
     awk -v firefox="$case_firefox" '
-        NR == 1 && $0 != "install" { exit 1 }
-        NR == 2 && $0 != "-d" { exit 1 }
-        NR == 3 && $0 != "-m755" { exit 1 }
-        NR == 4 && $0 != firefox "/defaults/pref" { exit 1 }
-        NR > 4 && (NR - 5) % 4 == 0 && $0 != "install" { exit 1 }
-        NR > 4 && (NR - 6) % 4 == 0 && $0 != "-m644" { exit 1 }
-        NR == 8 && $0 != firefox "/.floating-urlbar-autoconfig" { exit 1 }
-        NR == 7 && $0 !~ /\/program\/\.floating-urlbar-autoconfig$/ { exit 1 }
-        NR == 12 && $0 != firefox "/config.js" { exit 1 }
-        NR == 11 && $0 !~ /\/program\/config.js$/ { exit 1 }
-        NR == 16 && $0 != firefox "/defaults/pref/config-prefs.js" { exit 1 }
-        NR == 15 && $0 !~ /\/program\/defaults\/pref\/config-prefs.js$/ { exit 1 }
-        END { if (NR != 16) exit 1 }
+        /^-m644$/ { if (!renaming) staged++ }
+        /^mv$/ { if (!renaming && staged != 3) exit 1; renaming = 1 }
+        END { if (!renaming) exit 1 }
     ' "$TEST_SUDO_TRACE" || fail 'sudo command arguments or ordering changed'
     cmp "$fixture/program/config.js" "$case_firefox/config.js" || fail 'sudo did not install startup file'
     make_case sudo-failure
@@ -121,10 +165,6 @@ else
     echo 'sudo-path fixture skipped: current user can write mode-555 directories.'
 fi
 chmod u+w "$case_firefox"
-
-run_uninstall() {
-    bash "$TEST_DIR/checkout/uninstall.sh" --profile "$case_profile" "$@" </dev/null > "$TEST_DIR/uninstall.log" 2>&1
-}
 
 # Interrupted receipt copies are recoverable before either startup file exists.
 for receipt_state in empty truncated; do
@@ -317,13 +357,16 @@ for cleanup in keep profile shared edited other-script other-uc-mjs other-sys-mj
     [[ "$(cat "$case_profile/prefs.js")" == 'unchanged prefs' ]] || fail "$cleanup cleanup changed prefs"
 done
 
-for cleanup in delayed delayed-backup delayed-edited delayed-unowned missing-chrome native-styles windows-receipt; do
+for cleanup in delayed delayed-backup delayed-edited delayed-unowned missing-chrome native-styles windows-receipt metadata; do
     make_case "cleanup-$cleanup"
     # Brackets must not be treated as find patterns when excluding native files.
     mv "$case_profile" "$case_profile [2024]"
     case_profile="$case_profile [2024]"
     run_install
     case "$cleanup" in
+        metadata)
+            for file in .DS_Store Thumbs.db desktop.ini; do printf 'metadata\n' > "$case_profile/chrome/utils/$file"; done
+            ;;
         missing-chrome) rm -rf -- "$case_profile/chrome" ;;
         delayed*)
             if [[ "$cleanup" == delayed-backup ]]; then
@@ -363,6 +406,8 @@ for cleanup in delayed delayed-backup delayed-edited delayed-unowned missing-chr
         [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs.bak-old")" == 'preserve backup' ]] || fail 'delayed cleanup lost backup'
     elif [[ "$cleanup" == native-styles ]]; then
         [[ "$(cat "$case_profile/chrome/userChrome.css")" == 'native chrome style' && "$(cat "$case_profile/chrome/userContent.css")" == 'native content style' ]] || fail 'cleanup changed native styles'
+    elif [[ "$cleanup" == metadata ]]; then
+        for file in .DS_Store Thumbs.db desktop.ini; do [[ "$(cat "$case_profile/chrome/utils/$file")" == metadata ]] || fail 'cleanup removed metadata'; done
     fi
 done
 
@@ -515,7 +560,7 @@ export TEST_REAL_INSTALL
 TEST_REAL_INSTALL="$(command -v install)"
 cat > "$TEST_DIR/failing-install/install" <<'INSTALL'
 #!/usr/bin/env bash
-if [[ "${*: -1}" == */config.js ]]; then exit 1; fi
+if [[ "${*: -1}" == */.floating-urlbar-startup.*/new-0 ]]; then exit 1; fi
 exec "$TEST_REAL_INSTALL" "$@"
 INSTALL
 chmod +x "$TEST_DIR/failing-install/install"

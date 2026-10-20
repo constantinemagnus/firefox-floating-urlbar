@@ -558,7 +558,7 @@
             ? event.metaKey && !event.ctrlKey
             : event.ctrlKey && !event.metaKey;
 
-        const shortcut = event.key.toLowerCase();
+        const shortcut = event.code === "KeyL" ? "l" : event.code === "KeyK" ? "k" : event.key.toLowerCase();
         const separateSearchBar = document.getElementById("searchbar") || document.getElementById("searchbar-new");
         const sidebar = document.getElementById("sidebar-container");
         // The CSS anchor exists only while the compact layout is actually displayed.
@@ -723,8 +723,10 @@
             // after cancellation. Only a deliberate field click requests expansion.
             const inField = event.target === urlbarInput ||
                 event.target === gURLBar._inputContainer || event.target === urlbarInput.parentElement;
+            const sidebar = document.getElementById("sidebar-container");
             if (event.button === 0 && inField && !centeredAtMouseDown &&
                 Services.prefs.getBoolPref(PREF_COMPACT, false) &&
+                sidebar && window.getComputedStyle(sidebar).anchorName === "--floatingurlbar-sidebar" &&
                 Services.prefs.getStringPref("sidebar.visibility", "") !== "expand-on-hover") {
                 urlbar.setAttribute(SIDEBAR_EDIT_ATTR, "");
             }
@@ -795,7 +797,7 @@
 
     window.addEventListener("popupshowing", event => {
         if (!isEnabled()) return;
-        log(
+        if (Services.prefs.getBoolPref(PREF_DEBUG, false)) log(
             "popupshowing", event.target?.id || event.target?.localName,
             "| anchor:", event.target?.anchorNode?.id,
             "| trigger:", event.target?.triggerNode?.id,
@@ -857,7 +859,7 @@
                 urlbar.hasAttribute("focused") &&
                 document.activeElement === urlbarInput;
 
-            log("menu closed; URL bar state:", JSON.stringify({
+            if (Services.prefs.getBoolPref(PREF_DEBUG, false)) log("menu closed; URL bar state:", JSON.stringify({
                 focused: urlbar.hasAttribute("focused"),
                 usertyping: urlbar.hasAttribute("usertyping"),
                 popoverOpen: urlbar.hasAttribute("popover-open"),

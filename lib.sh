@@ -43,6 +43,9 @@ find_profile_root() {
 firefox_running() {
     pgrep -x firefox >/dev/null 2>&1 ||
     pgrep -x firefox-bin >/dev/null 2>&1 ||
+    pgrep -x firefox-esr >/dev/null 2>&1 ||
+    pgrep -x librewolf >/dev/null 2>&1 ||
+    pgrep -x librewolf-bin >/dev/null 2>&1 ||
     pgrep -x Firefox >/dev/null 2>&1
 }
 
@@ -50,7 +53,7 @@ firefox_running() {
 # Profiles
 # ---------------------------------------------------------------
 
-# Prints "name|absolute-path|raw-path" for each profile in profiles.ini.
+# Prints NUL-terminated name, absolute path and raw path for each profile.
 list_profiles_from_ini() {
     local root="$1"
     local ini="$root/profiles.ini"
@@ -61,7 +64,7 @@ list_profiles_from_ini() {
         function flush() {
             if (path != "") {
                 full = (rel == "0") ? path : root "/" path
-                print name "|" full "|" path
+                printf "%s%c%s%c%s%c", name, 0, full, 0, path, 0
             }
             name = ""; path = ""; rel = "1"
         }
@@ -99,14 +102,9 @@ default_profile_raw() {
 choose_profile() {
     local root="$1" preferred="${2:-}"
     local names=() paths=() raws=()
-    local line name path raw
+    local name path raw
 
-    while IFS= read -r line; do
-        [[ -n "$line" ]] || continue
-        name="${line%%|*}"
-        line="${line#*|}"
-        path="${line%%|*}"
-        raw="${line#*|}"
+    while IFS= read -r -d '' name && IFS= read -r -d '' path && IFS= read -r -d '' raw; do
         [[ -f "$path/prefs.js" ]] || continue   # skip profiles that were never used
         names+=("$name"); paths+=("$path"); raws+=("$raw")
     done < <(list_profiles_from_ini "$root")
@@ -170,7 +168,7 @@ choose_profile() {
         prompt="Select profile [1-${#paths[@]}]: "
     fi
 
-    read -r -p "$prompt" choice
+    read -r -p "$prompt" choice || die "No profile selected (input closed). Use --profile DIR."
 
     if [[ -z "$choice" && $default_idx -ge 0 ]]; then
         choice="$((default_idx + 1))"
@@ -356,6 +354,7 @@ clear_startup_cache() {
     local profile dir
     profile="$(cd -- "$1" && pwd -P)" || return 1
     dir="$profile/startupCache"
+    [[ -e "$dir" || -L "$dir" ]] || return 0
     [[ ! -L "$dir" && -d "$dir" ]] || return 1
 
     if rm -rf -- "$dir" && [[ ! -e "$dir" && ! -L "$dir" ]]; then

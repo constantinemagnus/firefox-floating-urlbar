@@ -237,14 +237,19 @@ function Install-StartupFiles([string]$Source, [string]$Directory) {
         Assert-Destination (Join-Path $Directory $path) -Directory
     }
     $files = @('config.js', 'defaults/pref/config-prefs.js')
+    $differs = $false
+    $needed = $false
     foreach ($file in $files) {
         $destination = Join-Path $Directory $file
         Assert-Destination $destination
         if ((Test-Path -LiteralPath $destination) -and
             (Get-FileHash -LiteralPath (Join-Path $Source $file)).Hash -ne (Get-FileHash -LiteralPath $destination).Hash) {
-            throw "Existing AutoConfig file differs: $destination. It will not be overwritten."
+            $differs = $true
         }
+        if (-not (Test-Path -LiteralPath $destination)) { $needed = $true }
     }
+    $receipt = Join-Path $Directory '.floating-urlbar-autoconfig'
+    if ($differs) { Assert-AutoconfigReceipt $receipt $Directory $files }
     $prefs = Join-Path $Directory 'defaults/pref'
     if (Test-Path -LiteralPath $prefs) {
         foreach ($file in Get-ChildItem -LiteralPath $prefs -Filter '*.js' -File) {
@@ -254,21 +259,65 @@ function Install-StartupFiles([string]$Source, [string]$Directory) {
             }
         }
     }
-    Write-Host "Setting up AutoConfig in $Directory (config.js and defaults/pref/config-prefs.js; AutoConfig sandbox disabled)."
+    if (-not $needed -and -not $differs) { return }
+    Write-Host "Setting up shared AutoConfig startup files in $Directory for ALL profiles (config.js and defaults/pref/config-prefs.js; AutoConfig sandbox disabled)."
     [IO.Directory]::CreateDirectory($prefs) | Out-Null
-    $receipt = Join-Path $Directory '.floating-urlbar-autoconfig'
     Assert-Destination $receipt
+    $owned = $false
     if (-not (Test-Path -LiteralPath "$Directory/config.js") -and -not (Test-Path -LiteralPath "$prefs/config-prefs.js")) {
-        $sourceReceipt = Join-Path $Source '.floating-urlbar-autoconfig'
-        Write-AutoconfigReceipt $sourceReceipt $Source $files
-        Copy-Item -LiteralPath $sourceReceipt -Destination $receipt
+        $owned = $true
+    } elseif (Test-Path -LiteralPath $receipt) {
+        Assert-AutoconfigReceipt $receipt $Directory $files
+        $owned = $true
     }
-    # config.js must exist before the preferences activate it.
-    foreach ($file in $files) {
-        $destination = Join-Path $Directory $file
-        if (-not (Test-Path -LiteralPath $destination)) {
-            Copy-Item -LiteralPath (Join-Path $Source $file) -Destination $destination
+    if ($owned) {
+        Write-AutoconfigReceipt (Join-Path $Source '.floating-urlbar-autoconfig') $Source $files
+        $files += '.floating-urlbar-autoconfig'
+    }
+    $staging = Join-Path $Directory ".floating-urlbar-startup.$([Guid]::NewGuid().ToString('N'))"
+    $entries = @()
+    $applied = @()
+    try {
+        [IO.Directory]::CreateDirectory($staging) | Out-Null
+        foreach ($file in $files) {
+            $destination = Join-Path $Directory $file
+            if ((Test-Path -LiteralPath $destination) -and
+                (Get-FileHash -LiteralPath (Join-Path $Source $file)).Hash -eq (Get-FileHash -LiteralPath $destination).Hash) { continue }
+            $staged = Join-Path $staging "new-$($entries.Count)"
+            $backup = Join-Path $staging "old-$($entries.Count)"
+            Copy-Item -LiteralPath (Join-Path $Source $file) -Destination $staged
+            if (Test-Path -LiteralPath $destination) { Copy-Item -LiteralPath $destination -Destination $backup }
+            $entries += [pscustomobject]@{ Destination = $destination; Staged = $staged; Backup = $backup }
         }
+        # config.js precedes activation; the receipt is committed last.
+        foreach ($entry in $entries) {
+            Assert-Destination (Join-Path $Directory 'defaults') -Directory
+            Assert-Destination $prefs -Directory
+            Assert-Destination $entry.Destination
+            $applied += $entry
+            Move-Item -LiteralPath $entry.Staged -Destination $entry.Destination -Force
+        }
+    } catch {
+        $failure = $_
+        for ($i = $applied.Count - 1; $i -ge 0; $i--) {
+            $entry = $applied[$i]
+            try {
+                Assert-Destination (Join-Path $Directory 'defaults') -Directory
+                Assert-Destination $prefs -Directory
+                Assert-Destination $entry.Destination
+                if (Test-Path -LiteralPath $entry.Backup) {
+                    Move-Item -LiteralPath $entry.Backup -Destination $entry.Destination -Force
+                } elseif (Test-Path -LiteralPath $entry.Destination) {
+                    Remove-Item -LiteralPath $entry.Destination -Force
+                }
+            } catch {
+                Write-Warning "Restore failed; recover $($entry.Destination) from $($entry.Backup). $($_.Exception.Message)"
+                $staging = ''
+            }
+        }
+        throw $failure
+    } finally {
+        if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force }
     }
 }
 
@@ -331,6 +380,10 @@ function Remove-ManagedAutoconfig([string]$SelectedProfile, [string]$ExplicitDir
         foreach ($item in Get-ChildItem -LiteralPath $utils -Force) {
             if ($item.Name -like '*.bak-*') { continue }
             if (-not $owned) { throw 'This loader was not installed by us; keeping fx-autoconfig.' }
+            if ($item.Name -cin @('.DS_Store', 'Thumbs.db', 'desktop.ini')) {
+                Assert-Destination $item.FullName
+                continue
+            }
             if ($item.Name -cnotin ($files + @('.floating-urlbar-source', '.floating-urlbar-files'))) {
                 throw "Other loader file found; keeping fx-autoconfig: $($item.FullName)"
             }
@@ -446,7 +499,7 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
         $archive = Join-Path $temp 'source.zip'
         Write-Host 'Downloading verified fx-autoconfig snapshot...'
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -UseBasicParsing -Uri "https://codeload.github.com/MrOtherGuy/fx-autoconfig/zip/$($AutoconfigPin.AUTOCONFIG_COMMIT)" -OutFile $archive
+        Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 -Uri "https://codeload.github.com/MrOtherGuy/fx-autoconfig/zip/$($AutoconfigPin.AUTOCONFIG_COMMIT)" -OutFile $archive
         $source = Expand-AutoconfigArchive $archive (Join-Path $temp 'source')
         foreach ($file in @('chrome.manifest') + $AutoconfigModules) {
             if (-not (Test-Path -LiteralPath "$source/profile/chrome/utils/$file" -PathType Leaf)) {
@@ -511,6 +564,27 @@ function Read-CleanupConfirmation([string]$Prompt) {
     catch { Write-Warning 'Could not read cleanup confirmation; keeping fx-autoconfig.'; return $false }
 }
 
+function Clear-StartupCache {
+    [CmdletBinding()]
+    param([string]$SelectedProfile)
+    try {
+        if (@(Get-Process -Name firefox, librewolf -ErrorAction SilentlyContinue).Count) {
+            throw 'Firefox is running.'
+        }
+        Assert-Destination $SelectedProfile -Directory
+        $cache = Join-Path $SelectedProfile 'startupCache'
+        Assert-Destination $cache -Directory
+        if (-not (Test-Path -LiteralPath $cache)) { return }
+        foreach ($item in Get-ChildItem -LiteralPath $cache -Recurse -Force) {
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Linked cache entry: $($item.FullName)" }
+        }
+        Remove-Item -LiteralPath $cache -Recurse -Force
+        Write-Host "Cleared startup cache: $cache"
+    } catch {
+        Write-Warning "Startup cache not cleared: $($_.Exception.Message) Clear it through about:support after closing Firefox."
+    }
+}
+
 function Invoke-FloatingUrlbarInstall {
     foreach ($name in @('ProfilePath', 'Root', 'FirefoxDirectory')) {
         if ($script:PSBoundParameters.ContainsKey($name) -and -not (Get-Variable $name -ValueOnly)) {
@@ -562,7 +636,7 @@ function Invoke-FloatingUrlbarInstall {
         'CSS/firefox-floating-urlbar.uc.css' = 'chrome/CSS/firefox-floating-urlbar.uc.css'
     }
     foreach ($path in $payloads.Values) { Assert-Destination (Join-Path $ProfilePath $path) }
-    if (@(Get-Process -Name firefox -ErrorAction SilentlyContinue).Count) {
+    if (@(Get-Process -Name firefox, librewolf -ErrorAction SilentlyContinue).Count) {
         Write-Warning 'Firefox is running. Restart it after installation or removal.'
     }
     if (-not $Uninstall) {
@@ -578,7 +652,7 @@ function Invoke-FloatingUrlbarInstall {
                 if ((Get-FileHash -LiteralPath $destination).Hash -ne (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot $source)).Hash) {
                     Copy-Item -LiteralPath $destination -Destination "$destination.bak-$([Guid]::NewGuid().ToString('N'))"
                 }
-                Remove-Item -LiteralPath $destination
+                Remove-Item -LiteralPath $destination -Force
             }
         }
         # Payload removal is complete even when optional loader cleanup refuses.
@@ -587,6 +661,7 @@ function Invoke-FloatingUrlbarInstall {
         if ($savedProfile -and [IO.Path]::IsPathRooted($savedProfile) -and (Test-SameProfilePath $savedProfile $ProfilePath)) {
             Remove-Item -LiteralPath $stateFile
         }
+        Clear-StartupCache $ProfilePath
         $cleanup = $RemoveAutoconfig -or $RemoveSharedAutoconfig
         $sharedCleanup = [bool]$RemoveSharedAutoconfig
         if (-not $cleanup -and -not [Console]::IsInputRedirected -and [Environment]::UserInteractive -and
@@ -605,9 +680,10 @@ function Invoke-FloatingUrlbarInstall {
     } else {
         [IO.Directory]::CreateDirectory($stateDirectory) | Out-Null
         Set-Content -LiteralPath $stateFile -Value $ProfilePath -Encoding UTF8
+        Clear-StartupCache $ProfilePath
         Write-Host "Installed into $ProfilePath"
     }
-    Write-Host 'Clear the startup cache through about:support and restart Firefox.'
+    Write-Host 'Restart Firefox; if changes do not appear, clear the startup cache through about:support.'
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

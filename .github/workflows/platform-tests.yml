@@ -26,6 +26,7 @@ jobs:
           node-version: '22'
       - name: Syntax and regression checks
         run: |
+          shellcheck -x install.sh update.sh uninstall.sh lib.sh autoconfig.sh install-remote.sh packaging/build-installers.sh
           node --check JS/replace-new-tab.uc.js
           bash -n install.sh update.sh uninstall.sh lib.sh autoconfig.sh install-remote.sh packaging/build-installers.sh tests/*.sh
           bash tests/run.sh

@@ -23,6 +23,65 @@ for (const [lineEnding, newline] of [["LF", "\n"], ["CRLF", "\r\n"]]) {
     });
 }
 
+test("non-Latin Ctrl/Cmd+L and K preserve current-tab navigation and modifier checks", () => {
+    for (const platform of ["Linux", "Darwin"]) {
+        for (const [key, code] of [["д", "KeyL"], ["λ", "KeyL"], ["л", "KeyK"], ["ن", "KeyK"]]) {
+            const s = setup({ platform });
+            s.ctrlT();
+            let nativeCalls = 0;
+            const modifiers = platform === "Darwin" ? { metaKey: true } : { ctrlKey: true };
+            const event = s.key(key, { code, ...modifiers }, () => { nativeCalls++; s.input.focus(); });
+            assert.equal(nativeCalls, 1);
+            assert.equal(event.defaultPrevented, undefined);
+            assert.equal(s.active(), true);
+            assert.equal(s.where({}), "current");
+            s.key("Escape");
+            assert.equal(s.active(), false);
+            for (const blocked of [{ altKey: true }, { shiftKey: true }, { isComposing: true }, { keyCode: 229 }]) {
+                s.key(key, { code, ...modifiers, ...blocked });
+                assert.equal(s.active(), false);
+            }
+        }
+    }
+});
+
+test("keyboard dispatch respects capture, bubble and cancellation timing", () => {
+    const s = setup();
+    const order = [];
+    s.window.addEventListener("keydown", () => order.push("window capture"), true);
+    s.input.addEventListener("keydown", () => order.push("input"));
+    s.window.addEventListener("keydown", () => order.push("window bubble"));
+    s.key("x", {}, () => order.push("native"));
+    assert.deepEqual(order, ["window capture", "input", "native", "window bubble"]);
+    s.key("l", { ctrlKey: true }, () => s.input.focus());
+    order.length = 0;
+    const event = s.key("Escape", {}, () => order.push("native"));
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(event.stopped, true);
+    assert.deepEqual(order, ["window capture"], "stopPropagation keeps same-target listeners, blocks native handling and bubble");
+});
+
+test("non-Latin compact Ctrl+K cancels native handling of a separate search bar", () => {
+    const s = setup({ compactControls: true, separateSearchBar: "searchbar", prefs: { "uc.floatingurlbar.compact": true } });
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    s.ctrlT();
+    const event = s.key("л", { code: "KeyK", ctrlKey: true }, () => assert.fail("native search bar received cancelled shortcut"));
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(event.stopped, true);
+    assert.equal(s.active(), true);
+    assert.equal(s.where({}), "current");
+});
+
+test("inactive compact layout cannot leave a click expansion marker", () => {
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    s.window.emit("mousedown", { target: s.input, button: 0 });
+    assert.equal(s.bar.hasAttribute("floatingurlbar-sidebar-editing"), false);
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    s.key("l", { ctrlKey: true }, () => s.input.focus());
+    assert.equal(s.active(), true);
+    assert.equal(s.bar.hasAttribute("floatingurlbar-sidebar-editing"), false);
+});
+
 test("floating-state selector agrees with the stylesheet and the mock", () => {
     const css = fs.readFileSync(path.join(__dirname, "../CSS/firefox-floating-urlbar.uc.css"), "utf8");
     const selector = source.match(/const CENTERED_SELECTOR = `([^`]+)`;/)[1]
@@ -67,17 +126,20 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
                 removeProperty: name => properties.delete(name)
             };
         }
-        addEventListener(type, fn) {
+        addEventListener(type, fn, options) {
             const list = this.listeners.get(type) || [];
-            list.push(fn);
+            list.push({ fn, capture: options === true || !!options?.capture });
             this.listeners.set(type, list);
         }
         removeEventListener(type, fn) {
-            this.listeners.set(type, (this.listeners.get(type) || []).filter(listener => listener !== fn));
+            this.listeners.set(type, (this.listeners.get(type) || []).filter(listener => listener.fn !== fn));
         }
-        emit(type, event = {}) {
+        emit(type, event = {}, capture) {
             event.target ??= this;
-            for (const fn of this.listeners.get(type) || []) fn(event);
+            for (const listener of this.listeners.get(type) || []) {
+                if (capture === undefined || listener.capture === capture) listener.fn(event);
+                if (event.immediateStopped) break;
+            }
         }
         setAttribute(name, value = "") { this.attrs.add(name); this.attributeValues.set(name, value); }
         removeAttribute(name) { this.attrs.delete(name); this.attributeValues.delete(name); }
@@ -400,13 +462,15 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
                 key, target: input,
                 preventDefault() { this.defaultPrevented = true; },
                 stopPropagation() { this.stopped = true; },
+                stopImmediatePropagation() { this.stopped = this.immediateStopped = true; },
                 ...modifiers
             };
-            window.emit("keydown", event);
-            if (!event.stopped) {
-                native(event);
-                document.emit("keydown", event);
+            for (const [node, capture] of [[window, true], [document, true], [input, true], [input, false]]) {
+                if (!event.stopped) node.emit("keydown", event, capture);
             }
+            if (!event.stopped && !event.defaultPrevented) native(event);
+            if (!event.stopped) document.emit("keydown", event, false);
+            if (!event.stopped) window.emit("keydown", event, false);
             return event;
         },
         advance(ms) {
@@ -2253,7 +2317,8 @@ test("compact unload removes its menubar hooks and visibility attributes", () =>
 });
 
 test("compact click expansion stays separate from automatic focus and keyboard floating", () => {
-    const s = setup({ prefs: { "uc.floatingurlbar.compact": true } });
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     const attr = "floatingurlbar-sidebar-editing";
     s.browser.tabContainer.emit("TabSelect");
     s.input.focus();
@@ -2281,6 +2346,7 @@ test("hover preference keeps native editing and floating shortcuts even when pin
     for (const hovering of [true, false]) {
         const prefs = { "uc.floatingurlbar.compact": true, "sidebar.visibility": "expand-on-hover" };
         const s = setup({ compactControls: true, prefs });
+        s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
         if (hovering) s.root.setAttribute("sidebar-expand-on-hover");
         s.input.focus();
         s.window.emit("mousedown", { target: s.input, button: 0 });
@@ -2302,7 +2368,8 @@ test("hover preference keeps native editing and floating shortcuts even when pin
 
 test("sidebar click expansion clears on Escape and tab changes and requires opt-in", () => {
     const attr = "floatingurlbar-sidebar-editing";
-    const s = setup({ prefs: { "uc.floatingurlbar.compact": true } });
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     for (const dismiss of [() => s.key("Escape"), () => s.browser.tabContainer.emit("TabSelect")]) {
         s.input.focus();
         s.window.emit("mousedown", { target: s.input, button: 0 });
@@ -2317,7 +2384,8 @@ test("sidebar click expansion clears on Escape and tab changes and requires opt-
 
 test("compact expansion follows field clicks rather than other URL-bar controls", () => {
     for (const targetName of ["input", "input-box", "input-container", "identity-button", "page-action"]) {
-        const s = setup({ prefs: { "uc.floatingurlbar.compact": true } });
+        const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+        s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
         s.input.parentElement = { id: "input-box" };
         s.gURLBar._inputContainer = { id: "input-container" };
         const targets = {
@@ -2341,6 +2409,7 @@ test("empty compact sidebar clicks dismiss ordinary editing and all floating flo
     for (const mode of ["mouse", "Ctrl+T", "Ctrl+L", "Ctrl+K"]) {
         const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
         const sidebar = s.widget("sidebar-container");
+        sidebar.style.setProperty("anchor-name", "--floatingurlbar-sidebar");
         sidebar.setAttribute("sidebar-launcher-expanded");
         s.browser.tabContainer.setAttribute("orient", "vertical");
         if (mode === "Ctrl+T") s.ctrlT();

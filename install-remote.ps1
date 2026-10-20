@@ -13,7 +13,7 @@ try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     if ($env:FIREFOX_FLOATING_URLBAR_URL) {
         $archive = Join-Path $temp 'repo.zip'
-        Invoke-WebRequest -UseBasicParsing -Uri $env:FIREFOX_FLOATING_URLBAR_URL -OutFile $archive
+        Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 -Uri $env:FIREFOX_FLOATING_URLBAR_URL -OutFile $archive
         Expand-Archive -LiteralPath $archive -DestinationPath $temp
         $root = Get-ChildItem -LiteralPath $temp -Directory |
             Where-Object { $_.Name -like 'firefox-floating-urlbar*' -and (Test-Path -LiteralPath (Join-Path $_.FullName 'install.ps1') -PathType Leaf) } |
@@ -23,7 +23,7 @@ try {
     } else {
         Write-Host 'Downloading installer files...'
         # Resolve once so files cannot come from different commits during an update.
-        $response = Invoke-WebRequest -UseBasicParsing -Uri 'https://api.github.com/repos/constantinemagnus/firefox-floating-urlbar/commits/main' -Headers @{ Accept = 'application/vnd.github.sha' }
+        $response = Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 -Uri 'https://api.github.com/repos/constantinemagnus/firefox-floating-urlbar/commits/main' -Headers @{ Accept = 'application/vnd.github.sha' }
         $content = $response.Content
         if ($content -is [byte[]]) { $content = [Text.Encoding]::UTF8.GetString($content) }
         $revision = ([string]$content).Trim()
@@ -32,7 +32,7 @@ try {
         [IO.Directory]::CreateDirectory((Join-Path $directory 'JS')) | Out-Null
         [IO.Directory]::CreateDirectory((Join-Path $directory 'CSS')) | Out-Null
         foreach ($file in @('install.ps1', 'fx-autoconfig.conf', 'JS/replace-new-tab.uc.js', 'CSS/firefox-floating-urlbar.uc.css')) {
-            Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/$revision/$file" -OutFile (Join-Path $directory $file)
+            Invoke-WebRequest -UseBasicParsing -TimeoutSec 180 -Uri "https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/$revision/$file" -OutFile (Join-Path $directory $file)
         }
     }
     $global:LASTEXITCODE = 0

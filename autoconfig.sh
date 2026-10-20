@@ -55,7 +55,7 @@ require_packaged_autoconfig_startup() {
 }
 
 check_autoconfig_startup() {
-    local source="$1" firefox_dir="$2" dir file dest
+    local source="$1" firefox_dir="$2" dir file dest differs=0
     for dir in "$firefox_dir/defaults" "$firefox_dir/defaults/pref"; do
         require_directory_destination "$dir"
     done
@@ -63,9 +63,12 @@ check_autoconfig_startup() {
         dest="$firefox_dir/$file"
         require_file_destination "$dest"
         if [[ -f "$dest" ]] && ! cmp -s "$source/$file" "$dest"; then
-            die "Existing AutoConfig file differs: $dest. Keep your configuration and install fx-autoconfig into it manually."
+            differs=1
         fi
     done
+    if (( differs )); then
+        check_autoconfig_receipt "$firefox_dir/.floating-urlbar-autoconfig" "$firefox_dir" 'config.js defaults/pref/config-prefs.js'
+    fi
     for file in "$firefox_dir/defaults/pref/"*.js; do
         [[ -f "$file" && "$file" != "$firefox_dir/defaults/pref/config-prefs.js" ]] || continue
         if grep -Eq 'general[.]config[.](filename|sandbox_enabled|obscure_value)' "$file"; then
@@ -74,15 +77,16 @@ check_autoconfig_startup() {
     done
 }
 
-install_autoconfig_startup() {
-    local source="$1" firefox_dir="$2" dir file needed=0
+install_autoconfig_startup() (
+    local source="$1" firefox_dir="$2" dir file needed=0 owned=0 staging i j
+    local startup_files=(config.js defaults/pref/config-prefs.js) applied=()
     local elevate=()
     check_autoconfig_startup "$source" "$firefox_dir"
     for file in config.js defaults/pref/config-prefs.js; do
-        [[ -f "$firefox_dir/$file" ]] || needed=1
+        cmp -s "$source/$file" "$firefox_dir/$file" || needed=1
     done
     (( needed )) || return 0
-    echo "Setting up AutoConfig in $firefox_dir (config.js and defaults/pref/config-prefs.js; AutoConfig sandbox disabled)."
+    echo "Setting up shared AutoConfig startup files in $firefox_dir for ALL profiles (config.js and defaults/pref/config-prefs.js; AutoConfig sandbox disabled)."
     for dir in "$firefox_dir" "$firefox_dir/defaults" "$firefox_dir/defaults/pref"; do
         if [[ -d "$dir" && ! -w "$dir" ]]; then
             command -v sudo >/dev/null 2>&1 || die "Write access to $firefox_dir is required; sudo is not available."
@@ -90,21 +94,62 @@ install_autoconfig_startup() {
             break
         fi
     done
-    # Activate AutoConfig only after config.js is in place.
     "${elevate[@]+"${elevate[@]}"}" install -d -m755 "$firefox_dir/defaults/pref" || return 1
-    # Claim shared files only when neither existed before our setup.
     local receipt="$firefox_dir/.floating-urlbar-autoconfig"
     require_file_destination "$receipt"
     if [[ ! -e "$firefox_dir/config.js" && ! -e "$firefox_dir/defaults/pref/config-prefs.js" ]]; then
-        write_autoconfig_receipt "$source/.floating-urlbar-autoconfig" "$source" config.js defaults/pref/config-prefs.js || return 1
-        "${elevate[@]+"${elevate[@]}"}" install -m644 "$source/.floating-urlbar-autoconfig" "$receipt" || return 1
+        owned=1
+    elif [[ -f "$receipt" ]]; then
+        check_autoconfig_receipt "$receipt" "$firefox_dir" 'config.js defaults/pref/config-prefs.js'
+        owned=1
     fi
-    for file in config.js defaults/pref/config-prefs.js; do
-        if [[ ! -f "$firefox_dir/$file" ]]; then
-            "${elevate[@]+"${elevate[@]}"}" install -m644 "$source/$file" "$firefox_dir/$file" || return 1
+    if (( owned )); then
+        write_autoconfig_receipt "$source/.floating-urlbar-autoconfig" "$source" "${startup_files[@]}" || return 1
+        startup_files+=(.floating-urlbar-autoconfig)
+    fi
+    staging="$("${elevate[@]+"${elevate[@]}"}" mktemp -d "$firefox_dir/.floating-urlbar-startup.XXXXXX")" || return 1
+    trap '"${elevate[@]+"${elevate[@]}"}" rm -rf -- "$staging"' EXIT
+    # Stage every replacement and rollback copy before touching a live file.
+    for i in "${!startup_files[@]}"; do
+        file="${startup_files[$i]}"
+        cmp -s "$source/$file" "$firefox_dir/$file" && continue
+        "${elevate[@]+"${elevate[@]}"}" install -m644 "$source/$file" "$staging/new-$i" || return 1
+        if [[ -f "$firefox_dir/$file" ]]; then
+            "${elevate[@]+"${elevate[@]}"}" cp -p -- "$firefox_dir/$file" "$staging/old-$i" || return 1
         fi
     done
-}
+    # config.js precedes activation; the receipt is committed last.
+    for i in "${!startup_files[@]}"; do
+        file="${startup_files[$i]}"
+        "${elevate[@]+"${elevate[@]}"}" test -f "$staging/new-$i" || continue
+        applied+=("$i")
+        if ! (require_directory_destination "$firefox_dir/defaults";
+              require_directory_destination "$firefox_dir/defaults/pref";
+              require_file_destination "$firefox_dir/$file") ||
+           ! "${elevate[@]+"${elevate[@]}"}" mv -f -- "$staging/new-$i" "$firefox_dir/$file"; then
+            warn "Startup installation failed; restoring the previous files."
+            for (( j=${#applied[@]}-1; j>=0; j-- )); do
+                i="${applied[$j]}"; file="${startup_files[$i]}"
+                if ! (require_directory_destination "$firefox_dir/defaults";
+                      require_directory_destination "$firefox_dir/defaults/pref";
+                      require_file_destination "$firefox_dir/$file"); then
+                    trap - EXIT
+                    warn "Cannot restore $file safely; recovery files remain in $staging"
+                    continue
+                fi
+                if "${elevate[@]+"${elevate[@]}"}" test -f "$staging/old-$i"; then
+                    if ! "${elevate[@]+"${elevate[@]}"}" mv -f -- "$staging/old-$i" "$firefox_dir/$file"; then
+                        trap - EXIT
+                        warn "Restore failed; recover $file from $staging/old-$i"
+                    fi
+                else
+                    "${elevate[@]+"${elevate[@]}"}" rm -f -- "$firefox_dir/$file" || warn "Could not remove incomplete startup file: $file"
+                fi
+            done
+            return 1
+        fi
+    done
+)
 
 write_autoconfig_receipt() {
     local receipt="$1" base="$2" file hash
@@ -160,6 +205,9 @@ remove_autoconfig() {
         (( owned )) || die "This loader was not installed by us; keeping fx-autoconfig."
         case "${file##*/}" in
             .floating-urlbar-source|.floating-urlbar-files) continue ;;
+            .DS_Store|Thumbs.db|desktop.ini)
+                require_file_destination "$file"
+                continue ;;
         esac
         [[ " $files " == *" ${file##*/} "* ]] || die "Other loader file found; keeping fx-autoconfig: $file"
     done
@@ -289,7 +337,7 @@ ensure_autoconfig() (
         if (( repair_only == 0 || receipt_complete == 0 )); then
             cp -- "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/LICENSE" "$source/fx-autoconfig.LICENSE" || return 1
             cp -- "$download_dir/fx-autoconfig.txt" "$source/fx-autoconfig.txt" || return 1
-            write_autoconfig_receipt "$download_dir/owned-files" "$source" $files || return 1
+            write_autoconfig_receipt "$download_dir/owned-files" "$source" chrome.manifest "${modules[@]}" fx-autoconfig.LICENSE fx-autoconfig.txt || return 1
             cp -- "$download_dir/owned-files" "$utils/.floating-urlbar-files" || return 1
         fi
     fi

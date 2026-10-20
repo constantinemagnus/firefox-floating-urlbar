@@ -35,8 +35,9 @@ try {
         AUTOCONFIG_ZIP_SHA256 = (Get-FileHash -LiteralPath $fixtureArchive).Hash
     }
     $script:downloads = 0
-    function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing) {
-        Assert-That ($Uri -eq 'https://codeload.github.com/MrOtherGuy/fx-autoconfig/zip/fixture') 'unexpected download URL'
+    function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing, [int]$TimeoutSec) {
+        Assert-That ($Uri -eq "https://codeload.github.com/MrOtherGuy/fx-autoconfig/zip/$($AutoconfigPin.AUTOCONFIG_COMMIT)") 'unexpected download URL'
+        Assert-That ($TimeoutSec -eq 180) 'download timeout missing'
         $script:downloads++
         Copy-Item -LiteralPath $fixtureArchive -Destination $OutFile
     }
@@ -390,6 +391,132 @@ try {
     try { Select-FirefoxProfile $missingRoot } catch { $profileError = $_.Exception.Message }
     Assert-That ($profileError.StartsWith('No initialized Firefox profiles found') -and
         $profileError.Contains('Start Firefox once first.')) 'missing root did not produce the helpful profile error'
+
+    # Changed pins replace owned startup files, with rollback on reported failures.
+    & {
+        $next = Join-Path $temp 'next/fx-autoconfig-next'
+        [IO.Directory]::CreateDirectory((Split-Path $next -Parent)) | Out-Null
+        Copy-Item -LiteralPath $fixture -Destination $next -Recurse
+        Set-Content "$next/program/config.js" '// next startup'
+        Set-Content "$next/program/defaults/pref/config-prefs.js" 'pref("general.config.filename", "config.js"); // next'
+        $archiveA = $fixtureArchive
+        $pinA = $AutoconfigPin
+        $archiveB = Join-Path $temp 'next.zip'
+        Compress-Archive -LiteralPath $next -DestinationPath $archiveB
+        $pinB = @{ AUTOCONFIG_COMMIT = 'next'; AUTOCONFIG_ZIP_SHA256 = (Get-FileHash $archiveB).Hash }
+        foreach ($state in @('owned', 'edited', 'unowned', 'fresh')) {
+            foreach ($phase in @('stage', 'replace', 'receipt', 'permission', 'success')) {
+                $directory = Join-Path $temp "pin-$state-$phase-Firefox"
+                $selected = Join-Path $temp "pin-$state-$phase-profile"
+                [IO.Directory]::CreateDirectory($directory) | Out-Null
+                [IO.Directory]::CreateDirectory($selected) | Out-Null
+                Set-Content "$directory/firefox.exe" 'fixture'
+                $AutoconfigPin = $pinA
+                $fixtureArchive = $archiveA
+                if ($state -ne 'fresh') { Ensure-Autoconfig $selected $directory }
+                if ($state -eq 'edited') { Set-Content "$directory/config.js" '// user edit' }
+                if ($state -eq 'unowned') { Remove-Item "$directory/.floating-urlbar-autoconfig" -Force }
+                $before = @{}
+                foreach ($file in @('config.js', 'defaults/pref/config-prefs.js', '.floating-urlbar-autoconfig')) {
+                    if (Test-Path "$directory/$file") { $before[$file] = (Get-FileHash "$directory/$file").Hash }
+                }
+                function Copy-Item {
+                    param($LiteralPath, $Destination)
+                    if ($phase -in @('stage', 'permission') -and $Destination.Replace('\', '/') -like '*/.floating-urlbar-startup.*/new-1') {
+                        if ($phase -eq 'permission') { throw [UnauthorizedAccessException]::new('fixture denied') }
+                        throw 'fixture staging failure'
+                    }
+                    Microsoft.PowerShell.Management\Copy-Item -LiteralPath $LiteralPath -Destination $Destination
+                }
+                function Move-Item {
+                    param($LiteralPath, $Destination, [switch]$Force)
+                    if (($phase -eq 'replace' -and $LiteralPath.Replace('\', '/') -like '*/.floating-urlbar-startup.*/new-1') -or
+                        ($phase -eq 'receipt' -and $LiteralPath.Replace('\', '/') -like '*/.floating-urlbar-startup.*/new-2')) { throw 'fixture rename failure' }
+                    Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
+                }
+                try {
+                    if ($phase -eq 'success' -and $state -in @('owned', 'fresh')) {
+                        Remove-Item Function:Copy-Item, Function:Move-Item
+                        $AutoconfigPin = $pinB
+                        $fixtureArchive = $archiveB
+                        Ensure-Autoconfig $selected $directory
+                        Assert-That ((Get-FileHash "$directory/config.js").Hash -eq (Get-FileHash "$next/program/config.js").Hash) 'pin upgrade kept old startup'
+                        Assert-AutoconfigReceipt "$directory/.floating-urlbar-autoconfig" $directory @('config.js', 'defaults/pref/config-prefs.js')
+                    } else {
+                        Assert-Rejected { Install-StartupFiles "$next/program" $directory } "accepted startup $state/$phase"
+                        foreach ($file in @('config.js', 'defaults/pref/config-prefs.js', '.floating-urlbar-autoconfig')) {
+                            if ($before.ContainsKey($file)) {
+                                Assert-That ((Get-FileHash "$directory/$file").Hash -eq $before[$file]) "startup rollback lost $file"
+                            } else { Assert-That (-not (Test-Path "$directory/$file")) "startup rollback left $file" }
+                        }
+                    }
+                } finally {
+                    Remove-Item Function:Copy-Item, Function:Move-Item -ErrorAction SilentlyContinue
+                }
+                Assert-That (@(Get-ChildItem $directory -Force -Filter '.floating-urlbar-startup.*').Count -eq 0) 'startup staging leaked'
+            }
+        }
+    }
+
+    # Cache cleanup is scoped, optional, and shared by install/reinstall/uninstall.
+    & {
+        function Get-Process { param($Name, $ErrorAction) if ($script:cacheBrowserRunning) { [pscustomobject]@{ Name = 'firefox' } } }
+        $script:cacheBrowserRunning = $false
+        $ProfilePath = Join-Path $temp 'cache lifecycle profile'
+        $outside = Join-Path $temp 'outside cache'
+        [IO.Directory]::CreateDirectory("$ProfilePath/chrome/utils") | Out-Null
+        [IO.Directory]::CreateDirectory($outside) | Out-Null
+        Set-Content "$ProfilePath/prefs.js" 'fixture'
+        Set-Content "$ProfilePath/chrome/utils/boot.sys.mjs" 'external loader'
+        Set-Content "$ProfilePath/chrome/utils/chrome.manifest" 'external loader'
+        Set-Content "$outside/sentinel" 'preserve'
+        foreach ($operation in @('install', 'reinstall', 'uninstall')) {
+            [IO.Directory]::CreateDirectory("$ProfilePath/startupCache") | Out-Null
+            Set-Content "$ProfilePath/startupCache/cached" 'stale'
+            $Uninstall = $operation -eq 'uninstall'
+            if ($Uninstall) {
+                (Get-Item "$ProfilePath/chrome/JS/replace-new-tab.uc.js").IsReadOnly = $true
+                (Get-Item "$ProfilePath/chrome/CSS/firefox-floating-urlbar.uc.css").IsReadOnly = $true
+                Assert-Rejected { Remove-Item -LiteralPath "$ProfilePath/chrome/JS/replace-new-tab.uc.js" } 'read-only fixture did not reproduce unforced removal failure'
+            }
+            Invoke-FloatingUrlbarInstall
+            Assert-That (-not (Test-Path "$ProfilePath/startupCache")) "$operation left startup cache"
+        }
+        Assert-That (-not (Test-Path "$ProfilePath/chrome/JS/replace-new-tab.uc.js")) 'read-only payload survived uninstall'
+        Clear-StartupCache $ProfilePath -WarningVariable cacheWarning
+        Assert-That (-not $cacheWarning) 'absent cache produced warning'
+        [IO.Directory]::CreateDirectory("$ProfilePath/startupCache") | Out-Null
+        $script:cacheBrowserRunning = $true
+        Clear-StartupCache $ProfilePath -WarningVariable cacheWarning
+        Assert-That ((Test-Path "$ProfilePath/startupCache") -and $cacheWarning) 'running Firefox cache was removed'
+        $script:cacheBrowserRunning = $false
+        $linkType = if ($env:OS -eq 'Windows_NT') { 'Junction' } else { 'SymbolicLink' }
+        New-Item -ItemType $linkType -Path "$ProfilePath/startupCache/linked" -Target $outside | Out-Null
+        Clear-StartupCache $ProfilePath -WarningVariable cacheWarning
+        Assert-That ((Test-Path "$outside/sentinel") -and (Test-Path "$ProfilePath/startupCache") -and $cacheWarning) 'linked child cache was not refused'
+        Remove-Item -LiteralPath "$ProfilePath/startupCache/linked" -Force
+        Remove-Item -LiteralPath "$ProfilePath/startupCache" -Force
+        New-Item -ItemType $linkType -Path "$ProfilePath/startupCache" -Target $outside | Out-Null
+        Clear-StartupCache $ProfilePath -WarningVariable cacheWarning
+        Assert-That ((Test-Path "$outside/sentinel") -and $cacheWarning) 'linked cache root was not refused'
+        Remove-Item -LiteralPath "$ProfilePath/startupCache" -Force
+        [IO.Directory]::CreateDirectory("$ProfilePath/startupCache") | Out-Null
+        function Remove-Item { throw [UnauthorizedAccessException]::new('fixture denied') }
+        Clear-StartupCache $ProfilePath -WarningVariable cacheWarning
+        Assert-That ((Test-Path "$ProfilePath/startupCache") -and $cacheWarning) 'cache permission failure lost fallback'
+    }
+
+    # Harmless loader metadata survives removal; unexpected modules remain refused.
+    & {
+        $selected = Join-Path $temp 'metadata-profile'
+        [IO.Directory]::CreateDirectory($selected) | Out-Null
+        Ensure-Autoconfig $selected $FirefoxDirectory
+        foreach ($name in @('.DS_Store', 'Thumbs.db', 'desktop.ini')) { Set-Content "$selected/chrome/utils/$name" 'preserve' }
+        Remove-ManagedAutoconfig $selected '' $false
+        foreach ($name in @('.DS_Store', 'Thumbs.db', 'desktop.ini')) {
+            Assert-That ((Get-Content "$selected/chrome/utils/$name") -eq 'preserve') 'loader cleanup removed metadata'
+        }
+    }
 
     # Test elevation argument quoting and scope without requesting real UAC.
     $script:originalStartupInstall = (Get-Command Install-StartupFiles).ScriptBlock
@@ -956,7 +1083,8 @@ if ($remoteExit) { exit $remoteExit }
     $remoteArchive = Join-Path $temp 'remote.zip'
     Compress-Archive -LiteralPath $remoteFixture -DestinationPath $remoteArchive
     $env:FIREFOX_FLOATING_URLBAR_URL = 'https://example.invalid/fixture.zip'
-    function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing) {
+    function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing, [int]$TimeoutSec) {
+        Assert-That ($TimeoutSec -eq 180) 'remote archive timeout missing'
         Copy-Item -LiteralPath $remoteArchive -Destination $OutFile
     }
     foreach ($remoteExit in @(0, 9)) {
@@ -1018,7 +1146,8 @@ Export-ModuleMember -Function Invoke-RestMethod
     $remoteExit = 0
     $global:floatingUrlbarRemoteDownloads = @()
     $global:floatingUrlbarRemoteMode = 'string'
-    function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing, [hashtable]$Headers) {
+    function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing, [hashtable]$Headers, [int]$TimeoutSec) {
+        Assert-That ($TimeoutSec -eq 180) 'remote request timeout missing'
         if ($Uri -like 'https://api.github.com/*') {
             Assert-That ($Headers.Accept -eq 'application/vnd.github.sha') 'remote launcher did not request an immutable revision'
             if ($global:floatingUrlbarRemoteMode -eq 'api-error') { throw 'fixture API failure' }

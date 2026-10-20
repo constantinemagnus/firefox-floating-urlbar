@@ -1,4 +1,12 @@
-# v1.5.2 — Navigation and installation reliability
+# Unreleased — Audit fixes
+
+- Permit receipt-verified AutoConfig pin upgrades, staging shared startup files and restoring them after reported installation failures.
+- Handle non-Latin Ctrl/Cmd+L and K, inactive compact layouts, profile names containing `|`, closed prompt input, and Firefox ESR/LibreWolf process names.
+- Clear scoped Windows startup caches when Firefox is closed, force removal of read-only payloads, and bound PowerShell download times.
+- Preserve loader metadata during cleanup, lint production shell scripts in CI, and recommend reviewing the full update diff.
+
+
+# v1.5.3 — Navigation and installation reliability
 
 - Search-engine menu actions, including Shift-click, now respect Ctrl+T's new-tab intent while preserving empty-tab reuse and explicit destinations.
 - Compact mode skips toolbar layout work while disabled and responds to preference changes without restarting Firefox.

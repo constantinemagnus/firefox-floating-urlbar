@@ -47,6 +47,8 @@ Installs the script and stylesheet into your selected profile. If fx-autoconfig 
 
 Run installers as your normal user; sudo/UAC is requested only for protected startup-file changes. One-command installers resolve current `main` once and download only the files needed for your platform, from that commit over HTTPS. Demo assets and tests are excluded. GitHub API failures, including rate limits, stop installation. fx-autoconfig is pinned to the commit in `fx-autoconfig.conf` and SHA-256 verified.
 
+One-command installation trusts this repository, its maintainers, and GitHub. HTTPS protects transport, and resolving a commit keeps downloaded files consistent; neither independently authenticates the project code. The fx-autoconfig checksum is trusted through this repository too. For review before execution, check out a specific commit or release tag, inspect the full source diff including installers, and run the local installer. Checksums downloaded from the same source do not protect against that source being compromised.
+
 ### Linux and macOS
 
 Arch users can manage fx-autoconfig with a [local pacman package](https://github.com/constantinemagnus/firefox-floating-urlbar/blob/main/packaging/fx-autoconfig/README.md).
@@ -89,6 +91,7 @@ Options: `-ProfilePath 'C:\path\to\profile'`, `-FirefoxDirectory 'C:\Program Fil
 
 - Regular Firefox installs support automatic fx-autoconfig setup; Flatpak/Snap need separate AutoConfig setup first (an existing loader is reused).
 - Restart Firefox; if nothing changes, clear the startup cache in `about:support`.
+- Install and uninstall clear only the selected profile's own `startupCache` when Firefox is closed. Linked or inaccessible caches need the `about:support` fallback; external local-data caches are left alone.
 
 ### Manual (any OS)
 

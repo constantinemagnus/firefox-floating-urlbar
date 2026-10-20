@@ -70,12 +70,12 @@ else
     echo "Files changed:"
     git --no-pager diff --stat "$CURRENT_REV" "$UPSTREAM_REV"
     echo
-    echo "Tip: these files run with full privileges inside Firefox."
-    echo "     To read the changes first: git diff $CURRENT_REV $UPSTREAM_REV -- JS CSS"
+    echo "Tip: browser scripts and installers run with your privileges; shared setup may request elevation."
+    echo "     To read the changes first: git diff $CURRENT_REV $UPSTREAM_REV"
     echo
 
     if (( ASSUME_YES == 0 )); then
-        read -r -p "Apply these changes and install? [y/N] " answer
+        read -r -p "Apply these changes and install? [y/N] " answer || { echo "Cancelled (input closed)."; exit 0; }
         [[ "$answer" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
     fi
 
