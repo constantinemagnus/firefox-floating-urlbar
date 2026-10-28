@@ -586,6 +586,31 @@ Ensure-Autoconfig $SelectedProfile $Directory
         $recovery = @(Get-ChildItem -LiteralPath "$selected/chrome" -Force -Directory -Filter '.floating-urlbar-install.*' |
             ForEach-Object { Join-Path $_.FullName '.floating-urlbar-source.previous' } | Where-Object { Test-Path -LiteralPath $_ })
         Assert-That ($recovery.Count -eq 1 -and "$(Get-Content -LiteralPath $recovery[0] -Raw)".Trim() -eq 'fixture') 'failed restore deleted its recovery copy'
+
+        # A failed final marker write leaves matching upgraded files and a pending marker.
+        $directory = Join-Path $temp 'pin-marker-write-Firefox'
+        $selected = Join-Path $temp 'pin-marker-write-profile'
+        [IO.Directory]::CreateDirectory($directory) | Out-Null
+        [IO.Directory]::CreateDirectory($selected) | Out-Null
+        Set-Content "$directory/firefox.exe" 'fixture'
+        $AutoconfigPin = $pinA
+        $fixtureArchive = $archiveA
+        Ensure-Autoconfig $selected $directory
+        $AutoconfigPin = $pinB
+        $fixtureArchive = $archiveB
+        function Set-Content {
+            param($LiteralPath, $Value, $Encoding)
+            if ($LiteralPath.Replace('\', '/') -like '*/chrome/utils/.floating-urlbar-source' -and "$Value" -eq 'next') { throw 'fixture marker write failure' }
+            Microsoft.PowerShell.Management\Set-Content @PSBoundParameters
+        }
+        try { Assert-Rejected { Ensure-Autoconfig $selected $directory } 'upgrade with a failed marker write succeeded' }
+        finally { Remove-Item Function:Set-Content }
+        $marker = "$selected/chrome/utils/.floating-urlbar-source"
+        Assert-That ("$(Get-Content -LiteralPath $marker -Raw)".Trim() -like 'pending *') 'failed marker write did not leave the upgrade pending'
+        Assert-That ((Get-FileHash "$selected/chrome/utils/fs.sys.mjs").Hash -eq (Get-FileHash "$next/profile/chrome/utils/fs.sys.mjs").Hash) 'failed marker write rolled back profile modules'
+        Assert-That ((Get-FileHash "$directory/config.js").Hash -eq (Get-FileHash "$next/program/config.js").Hash) 'failed marker write left old startup'
+        Ensure-Autoconfig $selected $directory
+        Assert-That ("$(Get-Content -LiteralPath $marker -Raw)".Trim() -eq 'next') 'retry after a failed marker write did not complete'
     }
 
     # Cache cleanup is scoped, optional, and shared by install/reinstall/uninstall.

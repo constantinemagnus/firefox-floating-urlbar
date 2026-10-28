@@ -109,6 +109,10 @@ if [[ "${TEST_STARTUP_FAILURE:-}" == interrupt && "${*: -1}" == */.floating-urlb
     done
     kill -KILL "${pids[@]}" $$
 fi
+if [[ "${TEST_STARTUP_FAILURE:-}" == marker-write && "${*: -1}" == */.floating-urlbar-startup.*/new-0 ]]; then
+    # Shared startup will succeed; make the final completion write fail afterwards.
+    chmod a-w "$TEST_MARKER_FILE"
+fi
 exec "$TEST_STARTUP_REAL_INSTALL" "$@"
 INSTALL
 cat > "$TEST_DIR/startup-failure-bin/cp" <<'CP'
@@ -199,6 +203,25 @@ recovery=("$case_profile/chrome/.floating-urlbar-install."*/utils/.floating-urlb
 [[ -f "${recovery[0]}" && "$(cat "${recovery[0]}")" == fixture ]] || fail 'failed restore deleted its recovery copy'
 grep -qF "${recovery[0]}" "$TEST_DIR/install.log" || fail 'restore warning did not name the surviving recovery copy'
 cp "$TEST_DIR/pin-a" "$TEST_DIR/checkout/fx-autoconfig.conf"
+
+# A failed final marker write leaves matching upgraded files and a pending marker.
+# Read-only files do not stop root, so this case needs an ordinary user.
+if [[ "$(id -u)" != 0 ]]; then
+    make_case pin-marker-write
+    run_install
+    cp "$TEST_DIR/pin-b" "$TEST_DIR/checkout/fx-autoconfig.conf"
+    export TEST_MARKER_FILE="$case_profile/chrome/utils/.floating-urlbar-source"
+    if TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/next.tar.gz" TEST_STARTUP_FAILURE=marker-write PATH="$TEST_DIR/startup-failure-bin:$PATH" run_install; then
+        fail 'upgrade with a failed marker write reported success'
+    fi
+    [[ "$(cat "$TEST_MARKER_FILE")" == pending* ]] || fail 'failed marker write did not leave the upgrade pending'
+    cmp "$TEST_DIR/source/fx-autoconfig-next/profile/chrome/utils/fs.sys.mjs" "$case_profile/chrome/utils/fs.sys.mjs" || fail 'failed marker write rolled back profile modules'
+    cmp "$TEST_DIR/source/fx-autoconfig-next/program/config.js" "$case_firefox/config.js" || fail 'failed marker write left old startup'
+    chmod u+w "$TEST_MARKER_FILE"
+    TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/next.tar.gz" run_install
+    [[ "$(cat "$TEST_MARKER_FILE")" == next ]] || fail 'retry after a failed marker write did not complete'
+    cp "$TEST_DIR/pin-a" "$TEST_DIR/checkout/fx-autoconfig.conf"
+fi
 
 # Exercise the real non-writable-directory branch without real privileges.
 make_case sudo-path

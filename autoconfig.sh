@@ -348,9 +348,7 @@ ensure_autoconfig() (
         fi
         # shellcheck disable=SC2317,SC2329 # Invoked by install_payloads.
         commit_autoconfig_startup() {
-            install_autoconfig_startup "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/program" "$firefox_dir" || return 1
-            # Stay pending until shared startup matches, so an interrupted upgrade is retried.
-            if (( repair_only == 0 )); then printf '%s\n' "$AUTOCONFIG_COMMIT" > "$marker" || return 1; fi
+            install_autoconfig_startup "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/program" "$firefox_dir"
         }
         if (( repair_only == 0 )); then
             for dir in "$profile/chrome/JS" "$profile/chrome/CSS" "$profile/chrome/resources"; do
@@ -359,6 +357,9 @@ ensure_autoconfig() (
             done
         fi
         install_payloads "$prepared" "$profile" commit_autoconfig_startup "${replacements[@]}" || return 1
+        # Mark complete only after both profile and shared files match. A failure here
+        # leaves them matching with a pending marker, so the next run finishes it.
+        if (( repair_only == 0 )); then printf '%s\n' "$AUTOCONFIG_COMMIT" > "$marker" || return 1; fi
         echo "fx-autoconfig is ready."
         return 0
     fi

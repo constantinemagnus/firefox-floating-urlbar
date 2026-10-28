@@ -567,8 +567,6 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
                     }
                 }
             }
-            # Stay pending until shared startup matches, so an interrupted upgrade is retried.
-            if (-not $repairOnly) { Set-Content -LiteralPath $marker -Value $AutoconfigPin.AUTOCONFIG_COMMIT -Encoding ASCII }
         }
         $directories = @($utils)
         if (-not $repairOnly) { $directories += @("$SelectedProfile/chrome/JS", "$SelectedProfile/chrome/CSS", "$SelectedProfile/chrome/resources") }
@@ -577,6 +575,9 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
             [IO.Directory]::CreateDirectory($path) | Out-Null
         }
         Install-Payloads $SelectedProfile $payloads $prepared $installStartup
+        # Mark complete only after both profile and shared files match. A failure here
+        # leaves them matching with a pending marker, so the next run finishes it.
+        if (-not $repairOnly) { Set-Content -LiteralPath $marker -Value $AutoconfigPin.AUTOCONFIG_COMMIT -Encoding ASCII }
         $loaderInstalled = $true
         Write-Host 'fx-autoconfig is ready.'
     } finally {
