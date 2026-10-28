@@ -346,7 +346,7 @@ ensure_autoconfig() (
             printf 'pending %s\n' "$download_dir" > "$prepared/utils/.floating-urlbar-source" || return 1
             replacements=(utils/.floating-urlbar-source "${replacements[@]}")
         fi
-        # shellcheck disable=SC2329 # Invoked by install_payloads.
+        # shellcheck disable=SC2317,SC2329 # Invoked by install_payloads.
         commit_autoconfig_startup() {
             if (( repair_only == 0 )); then printf '%s\n' "$AUTOCONFIG_COMMIT" > "$marker" || return 1; fi
             install_autoconfig_startup "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/program" "$firefox_dir"
@@ -372,7 +372,7 @@ ensure_autoconfig() (
         ln -s "$source/$file" "$link_dir/utils/$file" || return 1
         package_files+=("utils/$file")
     done
-    # shellcheck disable=SC2329 # Invoked by install_payloads after all links commit.
+    # shellcheck disable=SC2317,SC2329 # Invoked by install_payloads after all links commit.
     commit_package_loader() { rm -f -- "$marker"; }
     install_payloads "$link_dir" "$profile" commit_package_loader "${package_files[@]}" || return 1
     echo "fx-autoconfig is ready."

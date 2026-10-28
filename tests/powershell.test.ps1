@@ -620,9 +620,15 @@ try {
         $fallback = Join-Path $env:LOCALAPPDATA 'Mozilla Firefox'
         [IO.Directory]::CreateDirectory($fallback) | Out-Null
         Set-Content "$fallback/firefox.exe" 'fixture'
+        # Hosted Windows runners have a real Firefox in Program Files; leave only the fixture.
+        $programFiles = $env:ProgramFiles, ${env:ProgramFiles(x86)}
+        $env:ProgramFiles = $null; ${env:ProgramFiles(x86)} = $null
         try {
             Assert-That ((Find-FirefoxDirectory "$root/present" '') -eq (Get-NormalizedProfilePath $fallback)) 'missing-drive Firefox hint skipped fallbacks'
-        } finally { Remove-Item -LiteralPath $fallback -Recurse -Force }
+        } finally {
+            $env:ProgramFiles, ${env:ProgramFiles(x86)} = $programFiles
+            Remove-Item -LiteralPath $fallback -Recurse -Force
+        }
     }
 
     # Empty or outdated markers are repaired without leaving metadata backups behind.
