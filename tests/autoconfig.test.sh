@@ -96,9 +96,19 @@ mkdir "$TEST_DIR/startup-failure-bin"
 export TEST_STARTUP_REAL_INSTALL TEST_STARTUP_REAL_MV
 TEST_STARTUP_REAL_INSTALL="$(command -v install)"
 TEST_STARTUP_REAL_MV="$(command -v mv)"
+export TEST_ROOT_PID=$$
 cat > "$TEST_DIR/startup-failure-bin/install" <<'INSTALL'
 #!/usr/bin/env bash
 if [[ "${TEST_STARTUP_FAILURE:-}" == stage && "${*: -1}" == */.floating-urlbar-startup.*/new-1 ]]; then exit 13; fi
+if [[ "${TEST_STARTUP_FAILURE:-}" == interrupt && "${*: -1}" == */.floating-urlbar-startup.*/new-0 ]]; then
+    # Simulate a killed installer: no traps, rollback or cleanup run.
+    # Signal the installer's ancestors first; this stub goes last.
+    pids=() pid="$(ps -o ppid= -p $$ | tr -d ' ')"
+    while [[ "$pid" != "$TEST_ROOT_PID" && "$pid" -gt 1 ]]; do
+        pids+=("$pid"); pid="$(ps -o ppid= -p "$pid" | tr -d ' ')"
+    done
+    kill -KILL "${pids[@]}" $$
+fi
 exec "$TEST_STARTUP_REAL_INSTALL" "$@"
 INSTALL
 cat > "$TEST_DIR/startup-failure-bin/cp" <<'CP'
@@ -120,6 +130,8 @@ if [[ "${TEST_STARTUP_FAILURE:-}" == module-replace && "$src" == */.floating-url
     printf 'partial replacement' > "${*: -1}"
     exit 13
 fi
+if [[ "${TEST_STARTUP_FAILURE:-}" == restore && ( "$src" == */.floating-urlbar-install.*/utils/fs.sys.mjs ||
+      "$src" == */.floating-urlbar-source.previous ) ]]; then exit 13; fi
 if [[ "${TEST_STARTUP_FAILURE:-}" == replace && "$src" == */.floating-urlbar-startup.*/new-1 ]] ||
    [[ "${TEST_STARTUP_FAILURE:-}" == receipt && "$src" == */.floating-urlbar-startup.*/new-2 ]]; then exit 13; fi
 exec "$TEST_STARTUP_REAL_MV" "$@"
@@ -160,6 +172,32 @@ for state in owned edited unowned fresh; do
         if compgen -G "$case_firefox/.floating-urlbar-startup.*" >/dev/null; then fail 'startup staging leaked'; fi
     done
 done
+
+# A killed upgrade stays pending, so the next run also finishes shared startup.
+cp "$TEST_DIR/pin-a" "$TEST_DIR/checkout/fx-autoconfig.conf"
+make_case pin-interrupt
+run_install
+cp "$TEST_DIR/pin-b" "$TEST_DIR/checkout/fx-autoconfig.conf"
+mkdir -p "$TEST_DIR/interrupt-tmp"
+if TMPDIR="$TEST_DIR/interrupt-tmp" TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/next.tar.gz" TEST_STARTUP_FAILURE=interrupt \
+    PATH="$TEST_DIR/startup-failure-bin:$PATH" run_install; then fail 'interrupted upgrade reported success'; fi
+cmp -s "$TEST_DIR/source/fx-autoconfig-next/program/config.js" "$case_firefox/config.js" && fail 'interruption came after startup replacement'
+[[ "$(cat "$case_profile/chrome/utils/.floating-urlbar-source")" != next ]] || fail 'interrupted upgrade was marked complete'
+TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/next.tar.gz" run_install
+cmp "$TEST_DIR/source/fx-autoconfig-next/program/config.js" "$case_firefox/config.js" || fail 'retry after interruption kept old startup'
+[[ "$(cat "$case_profile/chrome/utils/.floating-urlbar-source")" == next ]] || fail 'retry after interruption did not complete the marker'
+
+# A failed restore keeps its recovery copy instead of deleting it with staging.
+cp "$TEST_DIR/pin-a" "$TEST_DIR/checkout/fx-autoconfig.conf"
+make_case pin-restore-failure
+run_install
+cp "$TEST_DIR/pin-b" "$TEST_DIR/checkout/fx-autoconfig.conf"
+if TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/next.tar.gz" TEST_STARTUP_FAILURE=restore PATH="$TEST_DIR/startup-failure-bin:$PATH" run_install; then
+    fail 'upgrade with a failed restore reported success'
+fi
+recovery=("$case_profile/chrome/.floating-urlbar-install."*/utils/.floating-urlbar-source.previous)
+[[ -f "${recovery[0]}" && "$(cat "${recovery[0]}")" == fixture ]] || fail 'failed restore deleted its recovery copy'
+grep -qF "${recovery[0]}" "$TEST_DIR/install.log" || fail 'restore warning did not name the surviving recovery copy'
 cp "$TEST_DIR/pin-a" "$TEST_DIR/checkout/fx-autoconfig.conf"
 
 # Exercise the real non-writable-directory branch without real privileges.

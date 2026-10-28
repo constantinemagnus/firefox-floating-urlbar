@@ -111,12 +111,12 @@ try {
 
     $outside = Join-Path $temp 'unrelated'
     Set-Content $outside 'unrelated data'
-    $linked = Join-Path $temp 'linked'
-    New-Item -ItemType SymbolicLink -Path $linked -Target $outside | Out-Null
-    Assert-Rejected { Copy-WithBackup "$fixture/program/config.js" $linked } 'accepted symbolic link'
-    $hardlink = Join-Path $temp 'hardlink'
-    New-Item -ItemType HardLink -Path $hardlink -Target $outside | Out-Null
-    Assert-Rejected { Copy-WithBackup "$fixture/program/config.js" $hardlink } 'accepted hard link'
+    $linkProfile = Join-Path $temp 'link profile'
+    [IO.Directory]::CreateDirectory("$linkProfile/chrome/JS") | Out-Null
+    New-Item -ItemType SymbolicLink -Path "$linkProfile/chrome/JS/linked.js" -Target $outside | Out-Null
+    Assert-Rejected { Install-Payloads $linkProfile ([ordered]@{ 'program/config.js' = 'chrome/JS/linked.js' }) $fixture } 'accepted symbolic link'
+    New-Item -ItemType HardLink -Path "$linkProfile/chrome/JS/hardlink.js" -Target $outside | Out-Null
+    Assert-Rejected { Install-Payloads $linkProfile ([ordered]@{ 'program/config.js' = 'chrome/JS/hardlink.js' }) $fixture } 'accepted hard link'
     Assert-That ((Get-Content $outside) -eq 'unrelated data') 'modified linked target'
 
     $rootFixture = Join-Path $temp 'profile root'
@@ -527,6 +527,65 @@ try {
                 Assert-That (@(Get-ChildItem $directory -Force -Filter '.floating-urlbar-startup.*').Count -eq 0) 'startup staging leaked'
             }
         }
+
+        # A killed upgrade stays pending, so the next run also finishes shared startup.
+        # The child exits hard mid-startup, skipping every catch and finally block.
+        $directory = Join-Path $temp 'pin-interrupt-Firefox'
+        $selected = Join-Path $temp 'pin-interrupt-profile'
+        [IO.Directory]::CreateDirectory($directory) | Out-Null
+        [IO.Directory]::CreateDirectory($selected) | Out-Null
+        Set-Content "$directory/firefox.exe" 'fixture'
+        $AutoconfigPin = $pinA
+        $fixtureArchive = $archiveA
+        Ensure-Autoconfig $selected $directory
+        $child = Join-Path $temp 'interrupted-upgrade.ps1'
+        Set-Content -LiteralPath $child -Value @'
+param([string]$Repo, [string]$SelectedProfile, [string]$Directory, [string]$NextArchive, [string]$Hash)
+$ErrorActionPreference = 'Stop'
+. "$Repo/install.ps1"
+$AutoconfigPin = @{ AUTOCONFIG_COMMIT = 'next'; AUTOCONFIG_ZIP_SHA256 = $Hash }
+function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing, [int]$TimeoutSec) {
+    Copy-Item -LiteralPath $NextArchive -Destination $OutFile
+}
+function Move-Item {
+    param($LiteralPath, $Destination, [switch]$Force)
+    if ($LiteralPath.Replace('\', '/') -like '*/.floating-urlbar-startup.*/new-0') { [Environment]::Exit(137) }
+    Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
+}
+Ensure-Autoconfig $SelectedProfile $Directory
+'@
+        & (Get-Process -Id $PID).Path -NoProfile -NonInteractive -File $child -Repo $repo -SelectedProfile $selected -Directory $directory -NextArchive $archiveB -Hash $pinB.AUTOCONFIG_ZIP_SHA256 | Out-Null
+        Assert-That ($LASTEXITCODE -eq 137) 'interruption fixture did not stop the child installer'
+        Assert-That ((Get-FileHash "$directory/config.js").Hash -ne (Get-FileHash "$next/program/config.js").Hash) 'interruption came after startup replacement'
+        Assert-That ("$(Get-Content "$selected/chrome/utils/.floating-urlbar-source" -Raw)".Trim() -ne 'next') 'interrupted upgrade was marked complete'
+        $AutoconfigPin = $pinB
+        $fixtureArchive = $archiveB
+        Ensure-Autoconfig $selected $directory
+        Assert-That ((Get-FileHash "$directory/config.js").Hash -eq (Get-FileHash "$next/program/config.js").Hash) 'retry after interruption kept old startup'
+        Assert-That ("$(Get-Content "$selected/chrome/utils/.floating-urlbar-source" -Raw)".Trim() -eq 'next') 'retry after interruption did not complete the marker'
+
+        # A failed restore keeps its recovery copy instead of deleting it with staging.
+        $directory = Join-Path $temp 'pin-restore-failure-Firefox'
+        $selected = Join-Path $temp 'pin-restore-failure-profile'
+        [IO.Directory]::CreateDirectory($directory) | Out-Null
+        [IO.Directory]::CreateDirectory($selected) | Out-Null
+        Set-Content "$directory/firefox.exe" 'fixture'
+        $AutoconfigPin = $pinA
+        $fixtureArchive = $archiveA
+        Ensure-Autoconfig $selected $directory
+        $AutoconfigPin = $pinB
+        $fixtureArchive = $archiveB
+        function Move-Item {
+            param($LiteralPath, $Destination, [switch]$Force)
+            $path = $LiteralPath.Replace('\', '/')
+            if ($path -like '*/.floating-urlbar-install.*/fs.sys.mjs' -or $path -like '*/.floating-urlbar-source.previous') { throw 'fixture move failure' }
+            Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
+        }
+        try { Assert-Rejected { Ensure-Autoconfig $selected $directory 3>$null } 'upgrade with a failed restore succeeded' }
+        finally { Remove-Item Function:Move-Item }
+        $recovery = @(Get-ChildItem -LiteralPath "$selected/chrome" -Force -Directory -Filter '.floating-urlbar-install.*' |
+            ForEach-Object { Join-Path $_.FullName '.floating-urlbar-source.previous' } | Where-Object { Test-Path -LiteralPath $_ })
+        Assert-That ($recovery.Count -eq 1 -and "$(Get-Content -LiteralPath $recovery[0] -Raw)".Trim() -eq 'fixture') 'failed restore deleted its recovery copy'
     }
 
     # Cache cleanup is scoped, optional, and shared by install/reinstall/uninstall.

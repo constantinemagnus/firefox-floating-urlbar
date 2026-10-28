@@ -303,7 +303,7 @@ copy_with_backup() {
 
 # Stage profile payloads together; a final shared-startup failure rolls them back too.
 install_payloads() (
-    local source_dir="$1" profile="$2" after_install="${3:-:}" staging file dest i j failed=0
+    local source_dir="$1" profile="$2" after_install="${3:-:}" staging file dest i j failed=0 restore_failed=0
     local files=(JS/replace-new-tab.uc.js CSS/firefox-floating-urlbar.uc.css)
     if (( $# > 3 )); then files=("${@:4}"); fi
     local backups=() applied=()
@@ -353,22 +353,24 @@ install_payloads() (
             i="${applied[$j]}"; dest="$profile/chrome/${files[$i]}"
             if ! (require_profile_destinations "$profile";
                   require_directory_destination "${dest%/*}"); then
-                warn "Cannot restore $dest; backup: ${backups[$i]:-no previous file}"
+                restore_failed=1; warn "Cannot restore $dest; backup: ${backups[$i]:-no previous file}"
                 continue
             fi
             # Remove only a link installed by this transaction, without following it.
             if [[ -L "$dest" && -L "$source_dir/${files[$i]}" &&
                   "$(readlink "$dest")" == "$(readlink "$source_dir/${files[$i]}")" ]]; then
-                rm -f -- "$dest" || { warn "Could not remove installed link: $dest"; continue; }
+                rm -f -- "$dest" || { restore_failed=1; warn "Could not remove installed link: $dest"; continue; }
             fi
             if ! (require_file_destination "$dest"); then
-                warn "Cannot restore $dest; backup: ${backups[$i]:-no previous file}"
+                restore_failed=1; warn "Cannot restore $dest; backup: ${backups[$i]:-no previous file}"
             elif [[ -n "${backups[$i]}" ]]; then
-                mv -f -- "${backups[$i]}" "$dest" || warn "Restore failed; recover $dest from ${backups[$i]}"
+                mv -f -- "${backups[$i]}" "$dest" || { restore_failed=1; warn "Restore failed; recover $dest from ${backups[$i]}"; }
             else
-                rm -f -- "$dest" || warn "Could not remove incomplete payload: $dest"
+                rm -f -- "$dest" || { restore_failed=1; warn "Could not remove incomplete payload: $dest"; }
             fi
         done
+        # Keep staging: it may hold the only copy of a previous ownership record.
+        if (( restore_failed )); then trap - EXIT; fi
         return 1
     fi
 )

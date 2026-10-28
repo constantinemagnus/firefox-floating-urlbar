@@ -52,15 +52,6 @@ function Backup-File([string]$Path) {
     return $backup
 }
 
-function Copy-WithBackup([string]$Source, [string]$Destination) {
-    Assert-Destination $Destination
-    if ((Test-Path -LiteralPath $Destination) -and
-        (Get-FileHash -LiteralPath $Source).Hash -ne (Get-FileHash -LiteralPath $Destination).Hash) {
-        $null = Backup-File $Destination
-    }
-    Copy-Item -LiteralPath $Source -Destination $Destination
-}
-
 function Install-Payloads([string]$SelectedProfile, [Collections.IDictionary]$Payloads,
     [string]$SourceRoot = $PSScriptRoot, [scriptblock]$AfterInstall = {}) {
     foreach ($path in @('chrome', 'chrome/JS', 'chrome/CSS')) {
@@ -109,10 +100,14 @@ function Install-Payloads([string]$SelectedProfile, [Collections.IDictionary]$Pa
                 Assert-Destination $entry.Destination
                 if ($entry.Backup) { Move-Item -LiteralPath $entry.Backup -Destination $entry.Destination -Force }
                 elseif (Test-Path -LiteralPath $entry.Destination) { Remove-Item -LiteralPath $entry.Destination -Force }
-            } catch { Write-Warning "Could not restore $($entry.Destination); backup: $($entry.Backup). $($_.Exception.Message)" }
+            } catch {
+                Write-Warning "Could not restore $($entry.Destination); backup: $($entry.Backup). $($_.Exception.Message)"
+                # Keep staging: it may hold the only copy of a previous ownership record.
+                $staging = ''
+            }
         }
         throw $failure
-    } finally { Remove-Item -LiteralPath $staging -Recurse -Force }
+    } finally { if ($staging) { Remove-Item -LiteralPath $staging -Recurse -Force } }
 }
 
 function Get-NormalizedProfilePath([string]$Path) {
@@ -550,7 +545,6 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
         foreach ($file in $replacements) { $payloads[$file] = "chrome/utils/$file" }
         $startupSource = Join-Path $source 'program'
         $installStartup = {
-            if (-not $repairOnly) { Set-Content -LiteralPath $marker -Value $AutoconfigPin.AUTOCONFIG_COMMIT -Encoding ASCII }
             try { Install-StartupFiles $startupSource $directory }
             catch {
                 if (-not (Test-AccessDenied $_.Exception)) { throw }
@@ -573,6 +567,8 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
                     }
                 }
             }
+            # Stay pending until shared startup matches, so an interrupted upgrade is retried.
+            if (-not $repairOnly) { Set-Content -LiteralPath $marker -Value $AutoconfigPin.AUTOCONFIG_COMMIT -Encoding ASCII }
         }
         $directories = @($utils)
         if (-not $repairOnly) { $directories += @("$SelectedProfile/chrome/JS", "$SelectedProfile/chrome/CSS", "$SelectedProfile/chrome/resources") }
