@@ -70,6 +70,8 @@
     // Wait this long after the bar closes/blurs before treating it as a cancel,
     // so a mouse click on a result can finish first.
     const END_DELAY_MS = 400;
+    // Firefox focuses the bar for Ctrl+L/Ctrl+K after the page declines the key.
+    const SHORTCUT_FOCUS_MS = 1000;
 
     const log = (...args) => {
         if (Services.prefs.getBoolPref(PREF_ENABLED, true) && Services.prefs.getBoolPref(PREF_DEBUG, false)) {
@@ -354,8 +356,11 @@
             // Location notifications include session-restore state; formatter updates do not.
             const isLocationChange = update?.uri
                 ? "dueToSessionRestore" in update : update?.spec && args.length >= 3;
+            // Only hold updates while the user is editing. A shortcut a page
+            // claimed (e.g. a Ctrl+K command palette) must not freeze the address.
             if (editingSession && isLocationChange &&
-                !update.dueToTabSwitch && !args[1]) {
+                !update.dueToTabSwitch && !args[1] &&
+                (urlbar.hasAttribute("focused") || urlbarPopups.size > 0)) {
                 return;
             }
             return original.apply(this, args);
@@ -558,7 +563,11 @@
             ? event.metaKey && !event.ctrlKey
             : event.ctrlKey && !event.metaKey;
 
-        const shortcut = event.code === "KeyL" ? "l" : event.code === "KeyK" ? "k" : event.key.toLowerCase();
+        // Latin layouts (including Dvorak and Colemak) match the typed letter, as
+        // Firefox does; other scripts fall back to the physical key.
+        const typed = event.key?.toLowerCase() ?? "";
+        const shortcut = /^[a-z]$/.test(typed) ? typed
+            : event.code === "KeyL" ? "l" : event.code === "KeyK" ? "k" : typed;
         const separateSearchBar = document.getElementById("searchbar") || document.getElementById("searchbar-new");
         const sidebar = document.getElementById("sidebar-container");
         // The CSS anchor exists only while the compact layout is actually displayed.
@@ -578,6 +587,15 @@
                 event.stopPropagation();
                 gURLBar.searchModeShortcut();
             }
+            // A page may claim the shortcut, so Firefox never focuses the bar.
+            // Drop that session instead of leaving the bar marked as floating.
+            const session = editingSession;
+            setTimeout(() => {
+                if (session === editingSession && !urlbar.hasAttribute("focused") &&
+                    !urlbar.hasAttribute("open") && urlbarPopups.size === 0) {
+                    endFlow();
+                }
+            }, SHORTCUT_FOCUS_MS);
         }
     }, true);
 
@@ -1000,6 +1018,19 @@
                         }
                     }
                 }
+                // The overflow button sits beside the target in #nav-bar and cannot be
+                // customized. While Firefox shows it, keep it after the regular buttons,
+                // before pinned extensions (or after a leading Extensions button).
+                const overflowButton = document.getElementById("nav-bar-overflow-button");
+                if (overflowButton && window.getComputedStyle(overflowButton).display !== "none") {
+                    const ordered = [...next];
+                    const lastRegular = ordered.findLastIndex(node => node.id !== "unified-extensions-button" &&
+                        !node.classList?.contains("unified-extensions-item"));
+                    const at = lastRegular >= 0 ? lastRegular + 1
+                        : ordered[0]?.id === "unified-extensions-button" ? 1 : 0;
+                    ordered.splice(at, 0, overflowButton);
+                    next = new Set(ordered);
+                }
                 for (const node of controls) {
                     if (!next.has(node)) {
                         releaseControl(node);
@@ -1195,7 +1226,7 @@
             });
             widgetsObserver.observe(toolbox, {
                 attributes: true, subtree: true,
-                attributeFilter: ["inactive", "autohide", "collapsed", "tabs-hidden"]
+                attributeFilter: ["inactive", "autohide", "collapsed", "tabs-hidden", "overflowing", "nonemptyoverflow"]
             });
             widgetsObserver.observe(document.documentElement, {
                 attributes: true, attributeFilter: ["customtitlebar", "sizemode", "customizing", "inDOMFullscreen"]

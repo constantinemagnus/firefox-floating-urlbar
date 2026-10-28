@@ -347,9 +347,6 @@
                             display: none !important;
                         }
                     }
-                    #nav-bar-overflow-button {
-                        display: none !important;
-                    }
                     /* Wide widgets stay in the revealed toolbar, opposite the sidebar header. */
                     #nav-bar-customization-target > :is(#zoom-controls, #edit-controls) {
                         order: 1;

@@ -30,6 +30,11 @@ jobs:
           node --check JS/replace-new-tab.uc.js
           bash -n install.sh update.sh uninstall.sh lib.sh autoconfig.sh install-remote.sh packaging/build-installers.sh tests/*.sh
           bash tests/run.sh
+      # Also runs the end-to-end elevation check, which needs POSIX permissions.
+      - name: PowerShell installer regressions
+        shell: pwsh
+        run: |
+          & ./tests/powershell.test.ps1
 
   macos:
     name: macOS (${{ matrix.arch }})

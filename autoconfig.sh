@@ -253,6 +253,10 @@ ensure_autoconfig() (
     set -e
     local profile="$1" firefox_dir="$2" utils="$1/chrome/utils"
     local marker="$utils/.floating-urlbar-source" file source download_dir="" link_dir="" packaged=0 complete=1 repair_only=0 receipt_complete=0
+    local created_dirs=() dir ensure_exit=0 d=0
+    for dir in "$profile/chrome" "$utils" "$profile/chrome/JS" "$profile/chrome/CSS" "$profile/chrome/resources"; do
+        [[ -d "$dir" ]] || created_dirs+=("$dir")
+    done
     local modules=("${AUTOCONFIG_MODULES[@]}")
     local files="chrome.manifest ${modules[*]} fx-autoconfig.LICENSE fx-autoconfig.txt"
     # Package-backed profiles also need startup validation when reusing their loader.
@@ -306,7 +310,7 @@ ensure_autoconfig() (
     else
         command -v curl >/dev/null 2>&1 || die "curl is required to download fx-autoconfig."
         download_dir="$(mktemp -d)"
-        trap 'rm -rf -- "$download_dir"' EXIT
+        trap 'ensure_exit=$?; rm -rf -- "$download_dir"; if (( ensure_exit )); then for (( d=${#created_dirs[@]}-1; d>=0; d-- )); do rmdir "${created_dirs[$d]}" 2>/dev/null || true; done; fi; exit "$ensure_exit"' EXIT
         echo "Downloading verified fx-autoconfig snapshot..."
         curl --fail --location --proto '=https' --tlsv1.2 --connect-timeout 20 --max-time 180 \
             "https://codeload.github.com/MrOtherGuy/fx-autoconfig/tar.gz/$AUTOCONFIG_COMMIT" \
@@ -324,43 +328,52 @@ ensure_autoconfig() (
         [[ -f "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/LICENSE" ]] || die "fx-autoconfig source is missing its license."
         require_file_destination "$utils/fx-autoconfig.LICENSE"
         require_file_destination "$utils/fx-autoconfig.txt"
-        install_autoconfig_startup "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/program" "$firefox_dir" || return 1
-    fi
-    mkdir -p "$utils" || return 1
-    # An interrupted install must remain distinguishable from an external loader.
-    if (( repair_only == 0 )); then printf 'pending\n' > "$marker" || return 1; fi
-    if (( packaged == 0 )); then
-        copy_with_backup "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/LICENSE" "$utils/fx-autoconfig.LICENSE" || return 1
+        # Prepare a complete profile transaction; shared startup commits last.
+        local prepared="$download_dir/prepared" replacements=(utils/fx-autoconfig.LICENSE utils/fx-autoconfig.txt)
+        mkdir -p "$prepared/utils" "$utils" || return 1
+        cp -- "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/LICENSE" "$prepared/utils/fx-autoconfig.LICENSE" || return 1
         printf 'fx-autoconfig by MrOtherGuy\nLicense: MPL-2.0 (see fx-autoconfig.LICENSE).\nUnmodified source: https://github.com/MrOtherGuy/fx-autoconfig/tree/%s\n' \
-            "$AUTOCONFIG_COMMIT" > "$download_dir/fx-autoconfig.txt" || return 1
-        copy_with_backup "$download_dir/fx-autoconfig.txt" "$utils/fx-autoconfig.txt" || return 1
+            "$AUTOCONFIG_COMMIT" > "$prepared/utils/fx-autoconfig.txt" || return 1
+        for file in chrome.manifest "${modules[@]}"; do
+            cp -- "$source/$file" "$prepared/utils/$file" || return 1
+            if (( repair_only == 0 )); then replacements+=("utils/$file"); fi
+        done
         if (( repair_only == 0 || receipt_complete == 0 )); then
-            cp -- "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/LICENSE" "$source/fx-autoconfig.LICENSE" || return 1
-            cp -- "$download_dir/fx-autoconfig.txt" "$source/fx-autoconfig.txt" || return 1
-            write_autoconfig_receipt "$download_dir/owned-files" "$source" chrome.manifest "${modules[@]}" fx-autoconfig.LICENSE fx-autoconfig.txt || return 1
-            cp -- "$download_dir/owned-files" "$utils/.floating-urlbar-files" || return 1
+            write_autoconfig_receipt "$prepared/utils/.floating-urlbar-files" "$prepared/utils" chrome.manifest "${modules[@]}" fx-autoconfig.LICENSE fx-autoconfig.txt || return 1
+            replacements+=(utils/.floating-urlbar-files)
         fi
-    fi
-    if (( repair_only )); then
-        echo "fx-autoconfig setup repaired."
+        if (( repair_only == 0 )); then
+            printf 'pending %s\n' "$download_dir" > "$prepared/utils/.floating-urlbar-source" || return 1
+            replacements=(utils/.floating-urlbar-source "${replacements[@]}")
+        fi
+        # shellcheck disable=SC2329 # Invoked by install_payloads.
+        commit_autoconfig_startup() {
+            if (( repair_only == 0 )); then printf '%s\n' "$AUTOCONFIG_COMMIT" > "$marker" || return 1; fi
+            install_autoconfig_startup "$download_dir/fx-autoconfig-$AUTOCONFIG_COMMIT/program" "$firefox_dir"
+        }
+        if (( repair_only == 0 )); then
+            for dir in "$profile/chrome/JS" "$profile/chrome/CSS" "$profile/chrome/resources"; do
+                require_directory_destination "$dir"
+                mkdir -p "$dir" || return 1
+            done
+        fi
+        install_payloads "$prepared" "$profile" commit_autoconfig_startup "${replacements[@]}" || return 1
+        echo "fx-autoconfig is ready."
         return 0
     fi
     mkdir -p "$utils" "$profile/chrome/JS" "$profile/chrome/CSS" "$profile/chrome/resources"
-    if (( packaged )); then
-        link_dir="$(mktemp -d "$utils/.floating-urlbar-links.XXXXXX")" || return 1
-        trap 'rm -rf -- "$link_dir"' EXIT
-    fi
-    copy_with_backup "$source/chrome.manifest" "$utils/chrome.manifest" || return 1
+    link_dir="$(mktemp -d "$utils/.floating-urlbar-links.XXXXXX")" || return 1
+    trap 'rm -rf -- "$link_dir"' EXIT
+    mkdir "$link_dir/utils" || return 1
+    printf 'pending %s\n' "$link_dir" > "$link_dir/utils/.floating-urlbar-source" || return 1
+    cp -- "$source/chrome.manifest" "$link_dir/utils/chrome.manifest" || return 1
+    local package_files=(utils/.floating-urlbar-source utils/chrome.manifest)
     for file in "${modules[@]}"; do
-        if (( packaged )); then
-            if [[ -f "$utils/$file" ]]; then
-                backup_file "$utils/$file" >/dev/null || return 1
-            fi
-            ln -s "$source/$file" "$link_dir/$file" || return 1
-            mv -f -- "$link_dir/$file" "$utils/$file" || return 1
-        else copy_with_backup "$source/$file" "$utils/$file" || return 1; fi
+        ln -s "$source/$file" "$link_dir/utils/$file" || return 1
+        package_files+=("utils/$file")
     done
-    if (( packaged == 0 )); then printf '%s\n' "$AUTOCONFIG_COMMIT" > "$marker";
-    else rm -f "$marker"; fi
+    # shellcheck disable=SC2329 # Invoked by install_payloads after all links commit.
+    commit_package_loader() { rm -f -- "$marker"; }
+    install_payloads "$link_dir" "$profile" commit_package_loader "${package_files[@]}" || return 1
     echo "fx-autoconfig is ready."
 )

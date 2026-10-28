@@ -84,6 +84,9 @@ run_install
 # A changed upstream pin may replace only receipt-verified shared startup files.
 cp "$TEST_DIR/checkout/fx-autoconfig.conf" "$TEST_DIR/pin-a"
 cp -R "$fixture" "$TEST_DIR/source/fx-autoconfig-next"
+for file in "$TEST_DIR/source/fx-autoconfig-next/profile/chrome/utils/"*; do
+    printf 'next %s\n' "${file##*/}" > "$file"
+done
 printf '// next startup\n' > "$TEST_DIR/source/fx-autoconfig-next/program/config.js"
 printf 'pref("general.config.filename", "config.js"); // next\n' > "$TEST_DIR/source/fx-autoconfig-next/program/defaults/pref/config-prefs.js"
 tar -czf "$TEST_DIR/next.tar.gz" -C "$TEST_DIR/source" fx-autoconfig-next
@@ -98,22 +101,39 @@ cat > "$TEST_DIR/startup-failure-bin/install" <<'INSTALL'
 if [[ "${TEST_STARTUP_FAILURE:-}" == stage && "${*: -1}" == */.floating-urlbar-startup.*/new-1 ]]; then exit 13; fi
 exec "$TEST_STARTUP_REAL_INSTALL" "$@"
 INSTALL
+cat > "$TEST_DIR/startup-failure-bin/cp" <<'CP'
+#!/usr/bin/env bash
+if [[ "${TEST_STARTUP_FAILURE:-}" == module-stage && "${*: -1}" == */.floating-urlbar-install.*/utils/fs.sys.mjs ]]; then
+    printf 'partial copy' > "${*: -1}"
+    exit 13
+fi
+exec "$TEST_REAL_CP" "$@"
+CP
+export TEST_REAL_CP
+TEST_REAL_CP="$(command -v cp)"
 cat > "$TEST_DIR/startup-failure-bin/mv" <<'MV'
 #!/usr/bin/env bash
 src="${@: -2:1}"
+if [[ "${TEST_STARTUP_FAILURE:-}" == module-replace && "$src" == */.floating-urlbar-install.*/utils/fs.sys.mjs ]] ||
+   [[ "${TEST_STARTUP_FAILURE:-}" == profile-receipt && "$src" == */.floating-urlbar-install.*/utils/.floating-urlbar-files ]]; then
+    [[ "$(cat "$(dirname "${*: -1}")/.floating-urlbar-source")" == pending* ]] || exit 14
+    printf 'partial replacement' > "${*: -1}"
+    exit 13
+fi
 if [[ "${TEST_STARTUP_FAILURE:-}" == replace && "$src" == */.floating-urlbar-startup.*/new-1 ]] ||
    [[ "${TEST_STARTUP_FAILURE:-}" == receipt && "$src" == */.floating-urlbar-startup.*/new-2 ]]; then exit 13; fi
 exec "$TEST_STARTUP_REAL_MV" "$@"
 MV
 chmod +x "$TEST_DIR/startup-failure-bin/"*
 for state in owned edited unowned fresh; do
-    for phase in stage replace receipt success; do
+    for phase in module-stage module-replace profile-receipt stage replace receipt success; do
         cp "$TEST_DIR/pin-a" "$TEST_DIR/checkout/fx-autoconfig.conf"
         make_case "pin-$state-$phase"
         if [[ "$state" != fresh ]]; then run_install; fi
         if [[ "$state" == edited ]]; then printf '// user edit\n' > "$case_firefox/config.js"; fi
         if [[ "$state" == unowned ]]; then rm "$case_firefox/.floating-urlbar-autoconfig"; fi
         cp -R "$case_firefox" "$TEST_DIR/before-$state-$phase"
+        if [[ -d "$case_profile/chrome/utils" ]]; then cp -R "$case_profile/chrome/utils" "$TEST_DIR/loader-before-$state-$phase"; fi
         cp "$TEST_DIR/pin-b" "$TEST_DIR/checkout/fx-autoconfig.conf"
         if TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/next.tar.gz" TEST_STARTUP_FAILURE="$phase" PATH="$TEST_DIR/startup-failure-bin:$PATH" run_install; then
             [[ "$phase" == success && ( "$state" == owned || "$state" == fresh ) ]] || fail "unsafe pin upgrade succeeded: $state/$phase"
@@ -126,6 +146,16 @@ for state in owned edited unowned fresh; do
                     cmp "$TEST_DIR/before-$state-$phase/$file" "$case_firefox/$file" || fail "startup rollback lost $file"
                 else [[ ! -e "$case_firefox/$file" ]] || fail "startup rollback left $file"; fi
             done
+            for file in chrome.manifest boot.sys.mjs fs.sys.mjs utils.sys.mjs uc_api.sys.mjs module_loader.mjs fx-autoconfig.LICENSE fx-autoconfig.txt .floating-urlbar-source .floating-urlbar-files; do
+                if [[ -f "$TEST_DIR/loader-before-$state-$phase/$file" ]]; then
+                    cmp "$TEST_DIR/loader-before-$state-$phase/$file" "$case_profile/chrome/utils/$file" || fail "loader rollback lost $file: $state/$phase"
+                else [[ ! -e "$case_profile/chrome/utils/$file" ]] || fail "loader rollback left $file: $state/$phase"; fi
+            done
+        fi
+        if [[ "$state" == owned && "$phase" != success ]]; then
+            TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/next.tar.gz" run_install
+            cmp "$TEST_DIR/source/fx-autoconfig-next/profile/chrome/utils/fs.sys.mjs" "$case_profile/chrome/utils/fs.sys.mjs" || fail 'upgrade retry kept old module'
+            cmp "$TEST_DIR/source/fx-autoconfig-next/program/config.js" "$case_firefox/config.js" || fail 'upgrade retry kept old startup'
         fi
         if compgen -G "$case_firefox/.floating-urlbar-startup.*" >/dev/null; then fail 'startup staging leaked'; fi
     done
@@ -139,7 +169,9 @@ export TEST_SUDO_FIREFOX="$case_firefox" TEST_SUDO_PROFILE="$case_profile" TEST_
 cat > "$TEST_DIR/recording-sudo/sudo" <<'SUDO'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ ! -e "$TEST_SUDO_PROFILE/chrome" ]] || { echo 'profile written before startup elevation completed' >&2; exit 1; }
+for arg in "$@"; do
+    [[ "$arg" != "$TEST_SUDO_PROFILE"* ]] || { echo 'elevation included profile writes' >&2; exit 1; }
+done
 printf '%s\n' "$@" >> "$TEST_SUDO_TRACE"
 [[ "${TEST_SUDO_FAIL:-0}" != 1 ]] || exit 13
 chmod u+w "$TEST_SUDO_FIREFOX"
@@ -468,6 +500,8 @@ printf 'local module edit\n' > "$case_profile/chrome/utils/boot.sys.mjs"
 run_install
 backups=("$case_profile/chrome/utils/boot.sys.mjs.bak-"*)
 [[ ${#backups[@]} == 1 && "$(cat "${backups[0]}")" == 'local module edit' ]] || fail 'loader upgrade lost modified module'
+metadata_backups=("$case_profile/chrome/utils/.floating-urlbar-"*.bak-*)
+[[ ! -e "${metadata_backups[0]}" ]] || fail 'loader upgrade left metadata backups'
 rm "$case_profile/chrome/utils/.floating-urlbar-source"
 printf 'third-party loader\n' > "$case_profile/chrome/utils/boot.sys.mjs"
 run_install
@@ -525,7 +559,7 @@ if run_install; then fail 'startup repair accepted conflicting configuration'; f
 [[ "$(cat "$case_firefox/defaults/pref/config-prefs.js")" == 'preserve startup configuration' ]] || fail 'startup repair changed conflicting configuration'
 [[ "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'preserve local loader edit' ]] || fail 'failed startup repair changed profile loader'
 
-# A partial first install remains managed and repairs missing modules on retry.
+# A failed staging copy leaves no live loader, and retry installs the whole set.
 make_case interrupted-loader
 mkdir "$TEST_DIR/failing-module-copy"
 export TEST_REAL_CP
@@ -537,14 +571,31 @@ exec "$TEST_REAL_CP" "$@"
 CP
 chmod +x "$TEST_DIR/failing-module-copy/cp"
 if PATH="$TEST_DIR/failing-module-copy:$PATH" run_install; then fail 'partial loader copy reported success'; fi
-[[ -f "$case_profile/chrome/utils/chrome.manifest" && -f "$case_profile/chrome/utils/boot.sys.mjs" ]] || fail 'fixture did not reach partial loader state'
-[[ ! -e "$case_profile/chrome/utils/fs.sys.mjs" ]] || fail 'fixture did not fail copying fs.sys.mjs'
-[[ "$(cat "$case_profile/chrome/utils/.floating-urlbar-source")" == pending ]] || fail 'partial loader lost its ownership marker'
+[[ ! -e "$case_profile/chrome/utils/boot.sys.mjs" && ! -e "$case_firefox/config.js" ]] || fail 'failed staging wrote live loader files'
 run_install
 for module in boot.sys.mjs fs.sys.mjs utils.sys.mjs uc_api.sys.mjs module_loader.mjs; do
     cmp "$fixture/profile/chrome/utils/$module" "$case_profile/chrome/utils/$module" || fail "retry did not restore $module"
 done
 [[ "$(cat "$case_profile/chrome/utils/.floating-urlbar-source")" == fixture ]] || fail 'retry did not finalize loader ownership'
+
+# An interrupted first replacement must not be mistaken for an external loader.
+make_case interrupted-replacement
+mkdir "$TEST_DIR/interrupted-replacement-bin"
+cat > "$TEST_DIR/interrupted-replacement-bin/mv" <<'MV'
+#!/usr/bin/env bash
+if [[ "${@: -2:1}" == */.floating-urlbar-install.*/utils/fs.sys.mjs ]]; then
+    kill -TERM "$PPID"
+    exit 143
+fi
+exec "$TEST_STARTUP_REAL_MV" "$@"
+MV
+chmod +x "$TEST_DIR/interrupted-replacement-bin/mv"
+if PATH="$TEST_DIR/interrupted-replacement-bin:$PATH" run_install; then fail 'interrupted replacement reported success'; fi
+[[ -f "$case_profile/chrome/utils/boot.sys.mjs" && ! -e "$case_profile/chrome/utils/fs.sys.mjs" ]] || fail 'interruption fixture did not reach partial replacement'
+[[ "$(cat "$case_profile/chrome/utils/.floating-urlbar-source")" == pending* ]] || fail 'interruption lost pending ownership'
+run_install
+cmp "$fixture/profile/chrome/utils/fs.sys.mjs" "$case_profile/chrome/utils/fs.sys.mjs" || fail 'interrupted replacement was mistaken for an external loader'
+[[ "$(cat "$case_profile/chrome/utils/.floating-urlbar-source")" == fixture ]] || fail 'interrupted replacement retry did not finish'
 
 make_case checksum
 original_archive="$TEST_AUTOCONFIG_ARCHIVE"
@@ -623,30 +674,34 @@ for startup in config.js defaults/pref/config-prefs.js; do
     cp "$fixture/program/$startup" "$case_firefox/$startup"
 done
 
-# Failed package link replacements must preserve the live module and its backup.
-for failure in link rename; do
+# Failed package conversion restores every old module and its ownership marker.
+for failure in link rename finalize; do
     make_case "packaged-failed-$failure"
     mkdir -p "$case_firefox/defaults/pref" "$case_profile/chrome/utils"
     cp "$fixture/program/config.js" "$case_firefox/config.js"
     cp "$fixture/program/defaults/pref/config-prefs.js" "$case_firefox/defaults/pref/config-prefs.js"
     printf 'older\n' > "$case_profile/chrome/utils/.floating-urlbar-source"
-    printf 'preserve live module\n' > "$case_profile/chrome/utils/boot.sys.mjs"
+    for file in chrome.manifest boot.sys.mjs fs.sys.mjs utils.sys.mjs uc_api.sys.mjs module_loader.mjs; do
+        printf 'old %s\n' "$file" > "$case_profile/chrome/utils/$file"
+    done
+    cp -R "$case_profile/chrome/utils" "$TEST_DIR/package-before-$failure"
     if (
         source "$TEST_DIR/checkout/lib.sh"
         source "$TEST_DIR/checkout/autoconfig.sh"
         packaged_autoconfig_directory() { printf '%s\n' "$fixture/profile/chrome/utils"; }
         case "$failure" in
-            link) ln() { return 1; } ;;
-            rename) mv() { return 1; } ;;
+            link) ln() { [[ "${*: -1}" != */fs.sys.mjs ]] || return 1; command ln "$@"; } ;;
+            rename) mv() { [[ "${@: -2:1}" != */utils/fs.sys.mjs ]] || return 1; command mv "$@"; } ;;
+            finalize) rm() { [[ "${*: -1}" != "$case_profile/chrome/utils/.floating-urlbar-source" ]] || return 1; command rm "$@"; } ;;
         esac
         ensure_autoconfig "$case_profile" "$case_firefox"
     ) > "$TEST_DIR/packaged-failed-$failure.log" 2>&1; then fail "package $failure failure accepted"; fi
-    [[ ! -L "$case_profile/chrome/utils/boot.sys.mjs" && "$(cat "$case_profile/chrome/utils/boot.sys.mjs")" == 'preserve live module' ]] ||
-        fail "package $failure failure lost live module"
-    backups=("$case_profile/chrome/utils/boot.sys.mjs.bak-"*)
-    [[ ${#backups[@]} == 1 && "$(cat "${backups[0]}")" == 'preserve live module' ]] || fail "package $failure failure lost backup"
-    [[ -z "$(find "$case_profile/chrome/utils" -maxdepth 1 -name '.floating-urlbar-links.*' -print)" ]] ||
-        fail "package $failure failure left staged links"
+    for file in "$TEST_DIR/package-before-$failure/"* "$TEST_DIR/package-before-$failure/.floating-urlbar-source"; do
+        [[ ! -L "$case_profile/chrome/utils/${file##*/}" ]] || fail "package $failure left a new link"
+        cmp "$file" "$case_profile/chrome/utils/${file##*/}" || fail "package $failure lost ${file##*/}"
+    done
+    [[ -z "$(find "$case_profile/chrome" -name '.floating-urlbar-links.*' -o -name '.floating-urlbar-install.*')" ]] ||
+        fail "package $failure failure left staging files"
 done
 
 # A package without its startup files must fail instead of reporting success.

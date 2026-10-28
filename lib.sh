@@ -301,25 +301,36 @@ copy_with_backup() {
     echo "  installed $(basename "$dest")"
 }
 
-# Stage the matching script/style pair before replacing either live file.
+# Stage profile payloads together; a final shared-startup failure rolls them back too.
 install_payloads() (
-    local source_dir="$1" profile="$2" staging file dest i j
+    local source_dir="$1" profile="$2" after_install="${3:-:}" staging file dest i j failed=0
     local files=(JS/replace-new-tab.uc.js CSS/firefox-floating-urlbar.uc.css)
-    local backups=("" "") applied=()
+    if (( $# > 3 )); then files=("${@:4}"); fi
+    local backups=() applied=()
     require_profile_destinations "$profile"
     staging="$(mktemp -d "$profile/chrome/.floating-urlbar-install.XXXXXX")" || return 1
     trap 'rm -rf -- "$staging"' EXIT
 
     for i in "${!files[@]}"; do
         file="${files[$i]}"; dest="$profile/chrome/$file"
-        if [[ -f "$dest" ]] && cmp -s "$source_dir/$file" "$dest"; then continue; fi
+        backups[i]=""
+        require_directory_destination "${dest%/*}"
+        require_file_destination "$dest"
+        if [[ ! -L "$source_dir/$file" && -f "$dest" ]] && cmp -s "$source_dir/$file" "$dest"; then continue; fi
         mkdir -p "$staging/${file%/*}" || return 1
-        if [[ -f "$dest" ]]; then cp -p -- "$dest" "$staging/$file" || return 1; fi
-        cp -- "$source_dir/$file" "$staging/$file" || return 1
+        if [[ -f "$dest" && ! -L "$source_dir/$file" ]]; then cp -p -- "$dest" "$staging/$file" || return 1; fi
+        cp -P -- "$source_dir/$file" "$staging/$file" || return 1
     done
     for i in "${!files[@]}"; do
         file="${files[$i]}"; dest="$profile/chrome/$file"
         if [[ -f "$staging/$file" && -f "$dest" ]]; then
+            case "${file##*/}" in
+                .floating-urlbar-source|.floating-urlbar-files)
+                    # Our own records only need a rollback copy for this transaction.
+                    backups[i]="$staging/$file.previous"
+                    cp -p -- "$dest" "${backups[$i]}" || return 1
+                    continue ;;
+            esac
             backups[i]="$(backup_file "$dest")" || return 1
             echo "  Backed up existing file to: $(basename "${backups[$i]}")"
         fi
@@ -328,22 +339,38 @@ install_payloads() (
         file="${files[$i]}"; dest="$profile/chrome/$file"
         [[ -f "$staging/$file" ]] || continue
         applied+=("$i")
-        if ! (require_profile_destinations "$profile") || ! mv -f -- "$staging/$file" "$dest"; then
-            warn "Payload installation failed; restoring the previous files."
-            for (( j=${#applied[@]}-1; j>=0; j-- )); do
-                i="${applied[$j]}"; dest="$profile/chrome/${files[$i]}"
-                if ! (require_profile_destinations "$profile"); then
-                    warn "Cannot restore $dest; backup: ${backups[$i]:-no previous file}"
-                elif [[ -n "${backups[$i]}" ]]; then
-                    mv -f -- "${backups[$i]}" "$dest" || warn "Restore failed; recover $dest from ${backups[$i]}"
-                else
-                    rm -f -- "$dest" || warn "Could not remove incomplete payload: $dest"
-                fi
-            done
-            return 1
+        if ! (require_profile_destinations "$profile";
+              require_directory_destination "${dest%/*}";
+              require_file_destination "$dest") || ! mv -f -- "$staging/$file" "$dest"; then
+            failed=1
+            break
         fi
         echo "  installed $(basename "$dest")"
     done
+    if (( failed )) || ! "$after_install"; then
+        warn "Payload installation failed; restoring the previous files."
+        for (( j=${#applied[@]}-1; j>=0; j-- )); do
+            i="${applied[$j]}"; dest="$profile/chrome/${files[$i]}"
+            if ! (require_profile_destinations "$profile";
+                  require_directory_destination "${dest%/*}"); then
+                warn "Cannot restore $dest; backup: ${backups[$i]:-no previous file}"
+                continue
+            fi
+            # Remove only a link installed by this transaction, without following it.
+            if [[ -L "$dest" && -L "$source_dir/${files[$i]}" &&
+                  "$(readlink "$dest")" == "$(readlink "$source_dir/${files[$i]}")" ]]; then
+                rm -f -- "$dest" || { warn "Could not remove installed link: $dest"; continue; }
+            fi
+            if ! (require_file_destination "$dest"); then
+                warn "Cannot restore $dest; backup: ${backups[$i]:-no previous file}"
+            elif [[ -n "${backups[$i]}" ]]; then
+                mv -f -- "${backups[$i]}" "$dest" || warn "Restore failed; recover $dest from ${backups[$i]}"
+            else
+                rm -f -- "$dest" || warn "Could not remove incomplete payload: $dest"
+            fi
+        done
+        return 1
+    fi
 )
 
 # Only remove a cache directly inside the physically resolved profile. External

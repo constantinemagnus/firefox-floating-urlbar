@@ -32,19 +32,13 @@ while (( $# )); do
 done
 if [[ "$url" == https://example.invalid/repo.tar.gz ]]; then
     cp "$TEST_FIXTURE_ARCHIVE" "$output"
-elif [[ "$url" == https://api.github.com/repos/constantinemagnus/firefox-floating-urlbar/commits/main ]]; then
-    printf '%s\n' "${TEST_REVISION:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+elif [[ "$url" == https://codeload.github.com/constantinemagnus/firefox-floating-urlbar/tar.gz/refs/heads/main ]]; then
+    printf '%s\n' "$url" >> "$TEST_DOWNLOAD_TRACE"
+    cp "$TEST_DEFAULT_ARCHIVE" "$output"
 elif [[ "$url" == https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/main/install-remote.sh ]]; then
     printf '%s\n' 'printf "downloaded installer ran\n" > "$TEST_INITIAL_TRACE"'
 else
-    prefix='https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/'
-    [[ "$url" == "$prefix"* ]] || exit 1
-    file="${url#"$prefix"}"
-    printf '%s\n' "$file" >> "$TEST_DOWNLOAD_TRACE"
-    [[ "$file" != "${TEST_MISSING_FILE:-}" ]] || exit 22
-    if [[ -f "$TEST_SOURCE/$file" ]]; then cp "$TEST_SOURCE/$file" "$output";
-    elif [[ "${TEST_REAL_SOURCE:-0}" == 0 ]]; then printf 'fixture\n' > "$output";
-    else exit 22; fi
+    exit 1
 fi
 CURL
 chmod +x "$TEST_DIR/bin/curl"
@@ -81,36 +75,37 @@ for installer in install.sh uninstall.sh; do
     [[ -z "$(find "$TEST_DIR/tmp" -mindepth 1)" ]] || fail 'invalid layout left temporary files'
 done
 
-# Default mode uses one immutable revision and fetches only installer inputs.
+# Default mode downloads one archive of main; no GitHub API request is made.
 unset FIREFOX_FLOATING_URLBAR_URL
-export TEST_SOURCE="$TEST_DIR/fixture/firefox-floating-urlbar-main"
-export TEST_DOWNLOAD_TRACE="$TEST_DIR/download.trace"
+export TEST_DEFAULT_ARCHIVE="$TEST_DIR/repo.tar.gz" TEST_DOWNLOAD_TRACE="$TEST_DIR/download.trace"
 bash "$REPO_DIR/install-remote.sh" --uninstall --profile '/temporary profile'
-[[ "$(cat "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' uninstall --profile '/temporary profile')" ]] || fail 'lean installer did not route arguments'
-expected="$(printf '%s\n' install.sh uninstall.sh lib.sh autoconfig.sh fx-autoconfig.conf JS/replace-new-tab.uc.js CSS/firefox-floating-urlbar.uc.css)"
-[[ "$(cat "$TEST_DOWNLOAD_TRACE")" == "$expected" ]] || fail 'lean installer downloaded unexpected files'
-[[ -z "$(find "$TEST_DIR/tmp" -mindepth 1)" ]] || fail 'lean installer left temporary files'
+[[ "$(cat "$TEST_INSTALL_TRACE")" == "$(printf '%s\n' uninstall --profile '/temporary profile')" ]] || fail 'default installer did not route arguments'
+[[ "$(cat "$TEST_DOWNLOAD_TRACE")" == https://codeload.github.com/constantinemagnus/firefox-floating-urlbar/tar.gz/refs/heads/main ]] ||
+    fail 'default installer downloaded unexpected URLs'
+[[ -z "$(find "$TEST_DIR/tmp" -mindepth 1)" ]] || fail 'default installer left temporary files'
 
-for failure in download invalid-revision missing-file; do
-    rm -f "$TEST_INSTALL_TRACE" "$TEST_DOWNLOAD_TRACE"
+printf 'not an archive\n' > "$TEST_DIR/corrupt.tar.gz"
+for failure in download corrupt-archive; do
+    rm -f "$TEST_INSTALL_TRACE"
     status=0
     case "$failure" in
         download) TEST_CURL_FAIL=7 bash "$REPO_DIR/install-remote.sh" > "$TEST_DIR/failure.log" 2>&1 || status=$? ;;
-        invalid-revision) TEST_REVISION='{"message":"API rate limit exceeded"}' bash "$REPO_DIR/install-remote.sh" > "$TEST_DIR/failure.log" 2>&1 || status=$? ;;
-        missing-file) TEST_MISSING_FILE=fx-autoconfig.conf bash "$REPO_DIR/install-remote.sh" > "$TEST_DIR/failure.log" 2>&1 || status=$? ;;
+        corrupt-archive) TEST_DEFAULT_ARCHIVE="$TEST_DIR/corrupt.tar.gz" bash "$REPO_DIR/install-remote.sh" > "$TEST_DIR/failure.log" 2>&1 || status=$? ;;
     esac
     [[ "$status" != 0 ]] || fail "accepted $failure"
     [[ ! -e "$TEST_INSTALL_TRACE" ]] || fail "ran installer after $failure"
     [[ -z "$(find "$TEST_DIR/tmp" -mindepth 1)" ]] || fail "$failure left temporary files"
 done
 
-# Serve the checkout's real installers through the same immutable download path.
-export TEST_SOURCE="$TEST_DIR/real-source" TEST_REAL_SOURCE=1
+# Serve the checkout's real installers through the same archive download path.
 export XDG_CONFIG_HOME="$TEST_DIR/config"
-mkdir -p "$TEST_SOURCE/JS" "$TEST_SOURCE/CSS" "$TEST_DIR/real-profile/chrome/utils" "$TEST_DIR/real-Firefox/defaults/pref"
-cp "$REPO_DIR/"*.sh "$REPO_DIR/fx-autoconfig.conf" "$TEST_SOURCE/"
-cp "$REPO_DIR/JS/replace-new-tab.uc.js" "$TEST_SOURCE/JS/"
-cp "$REPO_DIR/CSS/firefox-floating-urlbar.uc.css" "$TEST_SOURCE/CSS/"
+real_source="$TEST_DIR/real-source/firefox-floating-urlbar-main"
+mkdir -p "$real_source/JS" "$real_source/CSS" "$TEST_DIR/real-profile/chrome/utils" "$TEST_DIR/real-Firefox/defaults/pref"
+cp "$REPO_DIR/"*.sh "$REPO_DIR/fx-autoconfig.conf" "$real_source/"
+cp "$REPO_DIR/JS/replace-new-tab.uc.js" "$real_source/JS/"
+cp "$REPO_DIR/CSS/firefox-floating-urlbar.uc.css" "$real_source/CSS/"
+tar -czf "$TEST_DIR/real.tar.gz" -C "$TEST_DIR/real-source" firefox-floating-urlbar-main
+export TEST_DEFAULT_ARCHIVE="$TEST_DIR/real.tar.gz"
 printf '#!/bin/sh\nexit 1\n' > "$TEST_DIR/bin/pgrep"
 chmod +x "$TEST_DIR/bin/pgrep"
 printf 'initialized profile\n' > "$TEST_DIR/real-profile/prefs.js"

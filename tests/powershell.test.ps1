@@ -134,6 +134,37 @@ try {
     Assert-That ((Select-FirefoxProfile (Join-Path $temp 'absent discovery root') $ProfilePath) -eq $ProfilePath) 'remembered custom profile was lost when discovery failed'
     Remove-Item Function:Read-Host
 
+    # Simulate 5.1's ANSI default even under pwsh; Firefox writes BOM-less UTF-8.
+    & {
+        $unicodeRoot = Join-Path $temp 'unicode ini root'
+        $unicodeName = 'prof ' + [char]0xE9
+        $unicodeProfile = Join-Path $unicodeRoot $unicodeName
+        foreach ($path in @($unicodeProfile, "$unicodeRoot/plain")) {
+            [IO.Directory]::CreateDirectory($path) | Out-Null
+            Set-Content "$path/prefs.js" 'fixture'
+        }
+        $utf8 = New-Object Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText("$unicodeRoot/profiles.ini", "[Profile0]`nName=$unicodeName`nIsRelative=1`nPath=$unicodeName`n[Profile1]`nName=plain`nIsRelative=1`nPath=plain`n[InstallTest]`nDefault=$unicodeName`n", $utf8)
+        function Get-Content {
+            param([string]$LiteralPath, [string]$Encoding)
+            if ($Encoding) { Microsoft.PowerShell.Management\Get-Content @PSBoundParameters }
+            else { [Text.Encoding]::GetEncoding(1252).GetString([IO.File]::ReadAllBytes($LiteralPath)) -split '\r?\n' }
+        }
+        $script:unicodePrompts = 0
+        function Read-Host([string]$Prompt) { $script:unicodePrompts++; return '' }
+        $profiles = @(Get-FirefoxProfiles $unicodeRoot)
+        Assert-That ($profiles.Count -eq 2 -and $profiles[0].Path -eq $unicodeProfile) 'UTF-8 INI omitted the Unicode profile beside an ASCII sibling'
+        Assert-That ((Select-FirefoxProfile $unicodeRoot) -eq $unicodeProfile) 'UTF-8 profiles.ini default selected the wrong profile'
+        [IO.File]::WriteAllText("$unicodeRoot/installs.ini", "[Test]`nDefault=$unicodeName`n", $utf8)
+        Assert-That ((Select-FirefoxProfile $unicodeRoot) -eq $unicodeProfile) 'UTF-8 installs.ini default selected the wrong profile'
+        Assert-That ($script:unicodePrompts -eq 2) 'Unicode INI discovery silently selected the ASCII sibling'
+        $unicodeFirefox = Join-Path $temp ("Firefox " + [char]0xE9)
+        [IO.Directory]::CreateDirectory($unicodeFirefox) | Out-Null
+        Set-Content "$unicodeFirefox/firefox.exe" 'fixture'
+        [IO.File]::WriteAllText("$unicodeProfile/compatibility.ini", "[Compatibility]`nLastPlatformDir=$unicodeFirefox`n", $utf8)
+        Assert-That ((Find-FirefoxDirectory $unicodeProfile '') -eq $unicodeFirefox) 'UTF-8 compatibility.ini lost the Firefox directory'
+    }
+
     # An alternate spelling of the remembered folder must match its row, not add one.
     & {
         function Write-Host([string]$Object) { $script:menuRows++ }
@@ -408,13 +439,17 @@ try {
         Copy-Item -LiteralPath $fixture -Destination $next -Recurse
         Set-Content "$next/program/config.js" '// next startup'
         Set-Content "$next/program/defaults/pref/config-prefs.js" 'pref("general.config.filename", "config.js"); // next'
+        foreach ($file in @('chrome.manifest') + $AutoconfigModules) {
+            Set-Content "$next/profile/chrome/utils/$file" "next $file"
+        }
+        function Start-Process { throw 'fixture elevation cancelled' }
         $archiveA = $fixtureArchive
         $pinA = $AutoconfigPin
         $archiveB = Join-Path $temp 'next.zip'
         Compress-Archive -LiteralPath $next -DestinationPath $archiveB
         $pinB = @{ AUTOCONFIG_COMMIT = 'next'; AUTOCONFIG_ZIP_SHA256 = (Get-FileHash $archiveB).Hash }
         foreach ($state in @('owned', 'edited', 'unowned', 'fresh')) {
-            foreach ($phase in @('stage', 'replace', 'receipt', 'permission', 'success')) {
+            foreach ($phase in @('module-stage', 'module-replace', 'profile-receipt', 'stage', 'replace', 'receipt', 'permission', 'success')) {
                 $directory = Join-Path $temp "pin-$state-$phase-Firefox"
                 $selected = Join-Path $temp "pin-$state-$phase-profile"
                 [IO.Directory]::CreateDirectory($directory) | Out-Null
@@ -429,8 +464,17 @@ try {
                 foreach ($file in @('config.js', 'defaults/pref/config-prefs.js', '.floating-urlbar-autoconfig')) {
                     if (Test-Path "$directory/$file") { $before[$file] = (Get-FileHash "$directory/$file").Hash }
                 }
+                $loaderBefore = @{}
+                $loaderFiles = @('chrome.manifest') + $AutoconfigModules + @('fx-autoconfig.LICENSE', 'fx-autoconfig.txt', '.floating-urlbar-files', '.floating-urlbar-source')
+                foreach ($file in $loaderFiles) {
+                    if (Test-Path "$selected/chrome/utils/$file") { $loaderBefore[$file] = (Get-FileHash "$selected/chrome/utils/$file").Hash }
+                }
                 function Copy-Item {
                     param($LiteralPath, $Destination)
+                    if ($phase -eq 'module-stage' -and $Destination.Replace('\', '/') -like '*/.floating-urlbar-install.*/fs.sys.mjs') {
+                        [IO.File]::WriteAllText($Destination, 'partial copy')
+                        throw 'fixture module staging failure'
+                    }
                     if ($phase -in @('stage', 'permission') -and $Destination.Replace('\', '/') -like '*/.floating-urlbar-startup.*/new-1') {
                         if ($phase -eq 'permission') { throw [UnauthorizedAccessException]::new('fixture denied') }
                         throw 'fixture staging failure'
@@ -439,6 +483,12 @@ try {
                 }
                 function Move-Item {
                     param($LiteralPath, $Destination, [switch]$Force)
+                    if (($phase -eq 'module-replace' -and $LiteralPath.Replace('\', '/') -like '*/.floating-urlbar-install.*/fs.sys.mjs') -or
+                        ($phase -eq 'profile-receipt' -and $LiteralPath.Replace('\', '/') -like '*/.floating-urlbar-install.*/.floating-urlbar-files')) {
+                        Assert-That ((Get-Content -LiteralPath "$selected/chrome/utils/.floating-urlbar-source") -like 'pending *') 'module replacement began without a pending ownership marker'
+                        [IO.File]::WriteAllText($Destination, 'partial replacement')
+                        throw 'fixture module replacement failure'
+                    }
                     if (($phase -eq 'replace' -and $LiteralPath.Replace('\', '/') -like '*/.floating-urlbar-startup.*/new-1') -or
                         ($phase -eq 'receipt' -and $LiteralPath.Replace('\', '/') -like '*/.floating-urlbar-startup.*/new-2')) { throw 'fixture rename failure' }
                     Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination -Force:$Force
@@ -452,7 +502,14 @@ try {
                         Assert-That ((Get-FileHash "$directory/config.js").Hash -eq (Get-FileHash "$next/program/config.js").Hash) 'pin upgrade kept old startup'
                         Assert-AutoconfigReceipt "$directory/.floating-urlbar-autoconfig" $directory @('config.js', 'defaults/pref/config-prefs.js')
                     } else {
-                        Assert-Rejected { Install-StartupFiles "$next/program" $directory } "accepted startup $state/$phase"
+                        $AutoconfigPin = $pinB
+                        $fixtureArchive = $archiveB
+                        Assert-Rejected { Ensure-Autoconfig $selected $directory } "accepted loader upgrade $state/$phase"
+                        foreach ($file in $loaderFiles) {
+                            if ($loaderBefore.ContainsKey($file)) {
+                                Assert-That ((Get-FileHash "$selected/chrome/utils/$file").Hash -eq $loaderBefore[$file]) "loader rollback lost $file ($state/$phase)"
+                            } else { Assert-That (-not (Test-Path "$selected/chrome/utils/$file")) "loader rollback left $file ($state/$phase)" }
+                        }
                         foreach ($file in @('config.js', 'defaults/pref/config-prefs.js', '.floating-urlbar-autoconfig')) {
                             if ($before.ContainsKey($file)) {
                                 Assert-That ((Get-FileHash "$directory/$file").Hash -eq $before[$file]) "startup rollback lost $file"
@@ -461,6 +518,11 @@ try {
                     }
                 } finally {
                     Remove-Item Function:Copy-Item, Function:Move-Item -ErrorAction SilentlyContinue
+                }
+                if ($state -eq 'owned' -and $phase -ne 'success') {
+                    Ensure-Autoconfig $selected $directory
+                    Assert-That ((Get-FileHash "$selected/chrome/utils/fs.sys.mjs").Hash -eq (Get-FileHash "$next/profile/chrome/utils/fs.sys.mjs").Hash) 'upgrade retry kept old module'
+                    Assert-That ((Get-FileHash "$directory/config.js").Hash -eq (Get-FileHash "$next/program/config.js").Hash) 'upgrade retry kept old startup'
                 }
                 Assert-That (@(Get-ChildItem $directory -Force -Filter '.floating-urlbar-startup.*').Count -eq 0) 'startup staging leaked'
             }
@@ -529,9 +591,82 @@ try {
         }
     }
 
+    # A state file written by PowerShell 7 (UTF-8, no BOM) still matches under 5.1.
+    & {
+        $Uninstall = $true
+        $Root = $null
+        function Read-Host([string]$Prompt) { throw 'unexpected profile prompt' }
+        $state = Join-Path $env:APPDATA 'firefox-floating-urlbar/profile'
+        $target = Join-Path $temp "Jos$([char]0xE9) profile"
+        [IO.Directory]::CreateDirectory("$target/chrome/JS") | Out-Null
+        Set-Content "$target/prefs.js" 'preserve preferences'
+        Copy-Item "$repo/JS/replace-new-tab.uc.js" "$target/chrome/JS/"
+        [IO.File]::WriteAllText($state, $target, [Text.UTF8Encoding]::new($false))
+        $ProfilePath = $target
+        Invoke-FloatingUrlbarInstall
+        Assert-That (-not (Test-Path $state)) 'non-ASCII saved profile was not recognized'
+    }
+
+    # Paths on missing drives are skipped instead of aborting profile or Firefox lookup.
+    & {
+        $root = Join-Path $temp 'missing-drive-root'
+        [IO.Directory]::CreateDirectory("$root/present") | Out-Null
+        Set-Content "$root/present/prefs.js" 'fixture'
+        Set-Content "$root/profiles.ini" "[Profile0]`nName=Unplugged`nIsRelative=0`nPath=Q:\missing`n[Profile1]`nName=Present`nIsRelative=1`nPath=present"
+        $found = @(Get-FirefoxProfiles $root)
+        Assert-That ($found.Count -eq 1 -and $found[0].Name -eq 'Present') 'missing-drive profile aborted the profile list'
+        Assert-That ((Select-FirefoxProfile $root 'Q:\missing') -eq $found[0].Path) 'missing-drive saved profile aborted selection'
+        Set-Content "$root/present/compatibility.ini" "[Compatibility]`nLastPlatformDir=Q:\gone"
+        $fallback = Join-Path $env:LOCALAPPDATA 'Mozilla Firefox'
+        [IO.Directory]::CreateDirectory($fallback) | Out-Null
+        Set-Content "$fallback/firefox.exe" 'fixture'
+        try {
+            Assert-That ((Find-FirefoxDirectory "$root/present" '') -eq (Get-NormalizedProfilePath $fallback)) 'missing-drive Firefox hint skipped fallbacks'
+        } finally { Remove-Item -LiteralPath $fallback -Recurse -Force }
+    }
+
+    # Empty or outdated markers are repaired without leaving metadata backups behind.
+    & {
+        $selected = Join-Path $temp 'marker-profile'
+        [IO.Directory]::CreateDirectory($selected) | Out-Null
+        Ensure-Autoconfig $selected $FirefoxDirectory
+        foreach ($marker in @('', 'outdated-commit')) {
+            [IO.File]::WriteAllText("$selected/chrome/utils/.floating-urlbar-source", $marker)
+            Ensure-Autoconfig $selected $FirefoxDirectory
+            Assert-That ("$(Get-Content "$selected/chrome/utils/.floating-urlbar-source" -Raw)".Trim() -eq $AutoconfigPin.AUTOCONFIG_COMMIT) "marker '$marker' was not repaired"
+        }
+        Assert-That (@(Get-ChildItem "$selected/chrome/utils" -Force -Filter '*.bak-*').Count -eq 0) 'metadata backups accumulated'
+        Remove-ManagedAutoconfig $selected '' $false
+        Assert-That (-not (Test-Path "$selected/chrome/utils")) 'loader cleanup left the utils folder'
+    }
+
+    # Relative profiles keep their startup cache under LOCALAPPDATA.
+    & {
+        function Get-Process { param($Name, $ErrorAction) }
+        $relative = 'Profiles/cache.default'
+        $roamingProfile = Join-Path $env:APPDATA "Mozilla/Firefox/$relative"
+        $localProfile = Join-Path $env:LOCALAPPDATA "Mozilla/Firefox/$relative"
+        [IO.Directory]::CreateDirectory($roamingProfile) | Out-Null
+        [IO.Directory]::CreateDirectory("$localProfile/startupCache") | Out-Null
+        Set-Content "$localProfile/startupCache/cached" 'stale'
+        Clear-StartupCache $roamingProfile -WarningVariable cacheWarning
+        Assert-That (-not (Test-Path "$localProfile/startupCache") -and -not $cacheWarning) 'local startup cache was not cleared'
+        $outside = Join-Path $temp 'outside local cache'
+        [IO.Directory]::CreateDirectory("$outside/startupCache") | Out-Null
+        Set-Content "$outside/startupCache/sentinel" 'preserve'
+        Remove-Item -LiteralPath $localProfile -Recurse -Force
+        $linkType = if ($env:OS -eq 'Windows_NT') { 'Junction' } else { 'SymbolicLink' }
+        New-Item -ItemType $linkType -Path $localProfile -Target $outside | Out-Null
+        Clear-StartupCache $roamingProfile -WarningVariable cacheWarning
+        Assert-That ((Test-Path "$outside/startupCache/sentinel") -and $cacheWarning) 'linked local profile was not refused'
+        Remove-TestDirectoryLink $localProfile
+        Assert-That (Test-Path "$outside/startupCache/sentinel") 'local link cleanup removed target data'
+    }
+
     # Test elevation argument quoting and scope without requesting real UAC.
     $script:originalStartupInstall = (Get-Command Install-StartupFiles).ScriptBlock
-    $script:elevatedDirectory = Join-Path $temp "Firefox user's install"
+    # PowerShell treats U+2019 as a single quote too.
+    $script:elevatedDirectory = Join-Path $temp "Firefox user's $([char]0x2019)install"
     [IO.Directory]::CreateDirectory($script:elevatedDirectory) | Out-Null
     Set-Content "$script:elevatedDirectory/firefox.exe" 'fixture'
     $elevatedProfile = Join-Path $temp 'elevation-profile'
@@ -541,12 +676,23 @@ try {
         Assert-That ($Verb -eq 'RunAs' -and $Wait -and $PassThru) 'elevation did not wait for its result'
         $decoded = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($ArgumentList[-1]))
         Assert-That ($decoded.Contains("install.ps1' -StartupOnly")) 'elevation invoked the wrong script or operation'
-        Assert-That ($decoded.Contains("Firefox user''s install")) 'elevation failed to quote its directory'
+        Assert-That ($decoded.Contains("Firefox user''s $([char]0x2019)$([char]0x2019)install")) 'elevation failed to quote its directory'
+        $parseErrors = $null
+        [Management.Automation.Language.Parser]::ParseInput($decoded, [ref]$null, [ref]$parseErrors) | Out-Null
+        Assert-That ($parseErrors.Count -eq 0) 'elevation command does not parse'
         Assert-That (-not $decoded.Contains('-ProfilePath')) 'elevation included user-profile writes'
         & $script:originalStartupInstall "$fixture/program" $script:elevatedDirectory
         return [pscustomobject]@{ ExitCode = 0 }
     }
     Ensure-Autoconfig $elevatedProfile $script:elevatedDirectory
+    # .NET calls such as CreateDirectory wrap the access error; it must still elevate.
+    function Install-StartupFiles {
+        throw [Management.Automation.MethodInvocationException]::new('fixture wrapped', [UnauthorizedAccessException]::new('fixture elevation required'))
+    }
+    $wrappedProfile = Join-Path $temp 'wrapped-elevation-profile'
+    [IO.Directory]::CreateDirectory($wrappedProfile) | Out-Null
+    Ensure-Autoconfig $wrappedProfile $script:elevatedDirectory
+    Assert-That (Test-Path "$wrappedProfile/chrome/utils/boot.sys.mjs") 'wrapped access error did not elevate'
     $cancelledDirectory = Join-Path $temp 'cancelled-Firefox'
     $cancelledProfile = Join-Path $temp 'cancelled-profile'
     [IO.Directory]::CreateDirectory($cancelledDirectory) | Out-Null
@@ -567,6 +713,51 @@ try {
     Set-Item Function:Install-StartupFiles -Value $script:originalStartupInstall
     Remove-Item Function:Start-Process
     Assert-That (Test-Path "$elevatedProfile/chrome/utils/boot.sys.mjs") 'profile installation did not resume after elevation'
+
+    # End to end from a real permission failure: only the UAC prompt is simulated, and the
+    # elevated command runs in a real child. Needs POSIX permissions as a non-root user.
+    if ($env:OS -ne 'Windows_NT' -and "$(id -u)" -ne '0') {
+        & {
+            $quote = [char]0x2019
+            $scriptDirectory = Join-Path $temp "O${quote}Brien's installer"
+            $readOnlyFirefox = Join-Path $temp "Mozilla Firefox ${quote}read-only"
+            $readOnlyProfile = Join-Path $temp 'read-only elevation profile'
+            foreach ($path in @("$scriptDirectory/JS", "$scriptDirectory/CSS", "$readOnlyFirefox/defaults/pref", $readOnlyProfile)) {
+                [IO.Directory]::CreateDirectory($path) | Out-Null
+            }
+            foreach ($file in @('install.ps1', 'JS/replace-new-tab.uc.js', 'CSS/firefox-floating-urlbar.uc.css')) {
+                Copy-Item -LiteralPath "$repo/$file" -Destination "$scriptDirectory/$file"
+            }
+            # The elevated child reads its pin from beside the script; point it at the offline fixture.
+            Set-Content "$scriptDirectory/fx-autoconfig.conf" "AUTOCONFIG_COMMIT=fixture`nAUTOCONFIG_ZIP_SHA256=$($AutoconfigPin.AUTOCONFIG_ZIP_SHA256)"
+            Set-Content "$readOnlyFirefox/firefox.exe" 'fixture'
+            $lockable = @($readOnlyFirefox, "$readOnlyFirefox/defaults", "$readOnlyFirefox/defaults/pref")
+            chmod 555 @lockable
+            try {
+                . "$scriptDirectory/install.ps1"
+                $script:elevations = 0
+                function Start-Process([string]$FilePath, [string]$Verb, [switch]$Wait, [switch]$PassThru, [string[]]$ArgumentList) {
+                    $script:elevations++
+                    Assert-That ($Verb -eq 'RunAs') 'permission failure did not request elevation'
+                    $decoded = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($ArgumentList[-1]))
+                    $parseErrors = $null
+                    [Management.Automation.Language.Parser]::ParseInput($decoded, [ref]$null, [ref]$parseErrors) | Out-Null
+                    Assert-That ($parseErrors.Count -eq 0) 'real elevation command does not parse'
+                    chmod 755 @lockable # What accepting UAC grants.
+                    try { & $FilePath @ArgumentList *> $null; $code = $LASTEXITCODE }
+                    finally { chmod 555 @lockable }
+                    return [pscustomobject]@{ ExitCode = $code }
+                }
+                Ensure-Autoconfig $readOnlyProfile $readOnlyFirefox
+                Assert-That ($script:elevations -eq 1) 'real permission failure did not elevate exactly once'
+                foreach ($file in @('config.js', 'defaults/pref/config-prefs.js', '.floating-urlbar-autoconfig')) {
+                    Assert-That (Test-Path -LiteralPath "$readOnlyFirefox/$file") "elevated child did not install $file"
+                }
+                Assert-That (Test-Path "$readOnlyProfile/chrome/utils/boot.sys.mjs") 'profile loader missing after real elevation'
+                Assert-That (@(Get-ChildItem $readOnlyFirefox -Force -Filter '.floating-urlbar-startup.*').Count -eq 0) 'elevated staging leaked'
+            } finally { chmod 755 @lockable }
+        }
+    }
 
     # Exercise the actual CLI and the elevated child entry point, still offline.
     $interpreter = (Get-Process -Id $PID).Path
@@ -671,25 +862,26 @@ try {
         Pop-Location
     }
 
-    # Failed first installs retain ownership so a retry repairs the partial loader.
+    # A failed staging copy leaves no live loader; retry installs the complete set.
     $interruptedProfile = Join-Path $temp 'interrupted profile'
     $interruptedFirefox = Join-Path $temp 'interrupted Firefox'
     [IO.Directory]::CreateDirectory($interruptedProfile) | Out-Null
     [IO.Directory]::CreateDirectory($interruptedFirefox) | Out-Null
     Set-Content "$interruptedProfile/prefs.js" 'preserve interrupted preferences'
     Set-Content "$interruptedFirefox/firefox.exe" 'fixture executable'
-    $originalCopyWithBackup = (Get-Command Copy-WithBackup).ScriptBlock
-    function Copy-WithBackup([string]$Source, [string]$Destination) {
-        if ((Split-Path $Destination -Leaf) -eq 'fs.sys.mjs') { throw 'fixture module copy failed' }
-        & $originalCopyWithBackup $Source $Destination
+    function Copy-Item {
+        param($LiteralPath, $Destination)
+        if ($Destination.Replace('\', '/') -like '*/.floating-urlbar-install.*/fs.sys.mjs') {
+            [IO.File]::WriteAllText($Destination, 'partial copy')
+            throw 'fixture module copy failed'
+        }
+        Microsoft.PowerShell.Management\Copy-Item @PSBoundParameters
     }
     try {
         Assert-Rejected { Ensure-Autoconfig $interruptedProfile $interruptedFirefox } 'partial loader copy reported success'
-        Assert-That ((Test-Path "$interruptedProfile/chrome/utils/boot.sys.mjs") -and
-            (Test-Path "$interruptedProfile/chrome/utils/chrome.manifest") -and
-            -not (Test-Path "$interruptedProfile/chrome/utils/fs.sys.mjs")) 'fixture did not reach partial loader state'
-        Assert-That ((Get-Content "$interruptedProfile/chrome/utils/.floating-urlbar-source") -eq 'pending') 'partial loader lost its ownership marker'
-    } finally { Set-Item Function:Copy-WithBackup -Value $originalCopyWithBackup }
+        Assert-That (-not (Test-Path "$interruptedProfile/chrome/utils/boot.sys.mjs") -and
+            -not (Test-Path "$interruptedFirefox/config.js")) 'failed staging wrote live loader files'
+    } finally { Remove-Item Function:Copy-Item }
     Ensure-Autoconfig $interruptedProfile $interruptedFirefox
     foreach ($module in $AutoconfigModules) {
         Assert-That ((Get-FileHash "$interruptedProfile/chrome/utils/$module").Hash -eq
@@ -1156,35 +1348,25 @@ Export-ModuleMember -Function Invoke-RestMethod
     $env:FIREFOX_FLOATING_URLBAR_URL = $null
     $remoteExit = 0
     $global:floatingUrlbarRemoteDownloads = @()
-    $global:floatingUrlbarRemoteMode = 'string'
-    function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing, [hashtable]$Headers, [int]$TimeoutSec) {
+    $global:floatingUrlbarRemoteMode = 'archive'
+    $global:floatingUrlbarRemoteArchive = Join-Path $temp 'remote.zip'
+    function Invoke-WebRequest([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing, [int]$TimeoutSec) {
         Assert-That ($TimeoutSec -eq 180) 'remote request timeout missing'
-        if ($Uri -like 'https://api.github.com/*') {
-            Assert-That ($Headers.Accept -eq 'application/vnd.github.sha') 'remote launcher did not request an immutable revision'
-            if ($global:floatingUrlbarRemoteMode -eq 'api-error') { throw 'fixture API failure' }
-            $revision = if ($global:floatingUrlbarRemoteMode -eq 'invalid-revision') { '{"message":"rate limited"}' } else { 'a' * 40 }
-            if ($global:floatingUrlbarRemoteMode -eq 'bytes') { return @{ Content = [Text.Encoding]::UTF8.GetBytes($revision) } }
-            return @{ Content = $revision }
-        }
-        $prefix = "https://raw.githubusercontent.com/constantinemagnus/firefox-floating-urlbar/$('a' * 40)/"
-        Assert-That ($Uri.StartsWith($prefix)) 'remote files did not use the resolved commit'
-        $file = $Uri.Substring($prefix.Length)
-        $global:floatingUrlbarRemoteDownloads += $file
-        if ($file -eq 'fx-autoconfig.conf' -and $global:floatingUrlbarRemoteMode -eq 'file-error') { throw 'fixture download failure' }
-        if ($global:floatingUrlbarRemoteMode -eq 'real') { Copy-Item -LiteralPath (Join-Path $repo $file) -Destination $OutFile }
-        elseif ($file -eq 'install.ps1') { Copy-Item "$remoteFixture/install.ps1" $OutFile }
-        else { Set-Content -LiteralPath $OutFile -Value 'fixture' }
+        $global:floatingUrlbarRemoteDownloads += $Uri
+        if ($global:floatingUrlbarRemoteMode -eq 'download-error') { throw 'fixture download failure' }
+        if ($global:floatingUrlbarRemoteMode -eq 'corrupt-archive') { Set-Content -LiteralPath $OutFile -Value 'not an archive'; return }
+        Copy-Item -LiteralPath $global:floatingUrlbarRemoteArchive -Destination $OutFile
     }
-    foreach ($mode in @('string', 'bytes', 'api-error', 'invalid-revision', 'file-error')) {
+    foreach ($mode in @('archive', 'download-error', 'corrupt-archive')) {
         $global:floatingUrlbarRemoteMode = $mode
         $global:floatingUrlbarRemoteDownloads = @()
         Remove-Item -LiteralPath $remoteTrace -ErrorAction SilentlyContinue
         $before = @(Get-ChildItem ([IO.Path]::GetTempPath()) -Directory -Filter 'floating-urlbar-remote-*' | ForEach-Object Name)
-        if ($mode -in @('string', 'bytes')) {
+        if ($mode -eq 'archive') {
             & "$repo/install-remote.ps1" -Uninstall -RemoveSharedAutoconfig -ProfilePath 'temporary profile with spaces'
             $trace = Get-Content -LiteralPath $remoteTrace -Raw | ConvertFrom-Json
-            Assert-That ($trace.Cleanup -and $trace.Uninstall -and $trace.ProfilePath -eq 'temporary profile with spaces') 'lean launcher lost cleanup arguments'
-            Assert-That (($global:floatingUrlbarRemoteDownloads -join ',') -eq 'install.ps1,fx-autoconfig.conf,JS/replace-new-tab.uc.js,CSS/firefox-floating-urlbar.uc.css') 'lean launcher downloaded unexpected files'
+            Assert-That ($trace.Cleanup -and $trace.Uninstall -and $trace.ProfilePath -eq 'temporary profile with spaces') 'default launcher lost cleanup arguments'
+            Assert-That (($global:floatingUrlbarRemoteDownloads -join ',') -eq 'https://codeload.github.com/constantinemagnus/firefox-floating-urlbar/zip/refs/heads/main') 'default launcher downloaded unexpected URLs'
         } else {
             Assert-Rejected { & "$repo/install-remote.ps1" } "accepted $mode"
             Assert-That (-not (Test-Path -LiteralPath $remoteTrace)) "executed installer after $mode"
@@ -1193,7 +1375,14 @@ Export-ModuleMember -Function Invoke-RestMethod
         Assert-That (($before -join ',') -eq ($after -join ',')) "$mode remote launcher left temporary files"
     }
     # Execute the actual downloaded script against a temporary external loader.
-    $global:floatingUrlbarRemoteMode = 'real'
+    $global:floatingUrlbarRemoteMode = 'archive'
+    $realSource = Join-Path $temp 'remote-real-source/firefox-floating-urlbar-main'
+    foreach ($file in @('install.ps1', 'fx-autoconfig.conf', 'JS/replace-new-tab.uc.js', 'CSS/firefox-floating-urlbar.uc.css')) {
+        [IO.Directory]::CreateDirectory((Split-Path (Join-Path $realSource $file) -Parent)) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $repo $file) -Destination (Join-Path $realSource $file)
+    }
+    $global:floatingUrlbarRemoteArchive = Join-Path $temp 'remote-real.zip'
+    Compress-Archive -LiteralPath $realSource -DestinationPath $global:floatingUrlbarRemoteArchive
     $realProfile = Join-Path $temp 'remote-real/profile with spaces'
     $realFirefox = Join-Path $temp 'remote-real/Firefox'
     [IO.Directory]::CreateDirectory("$realProfile/chrome/utils") | Out-Null
@@ -1225,7 +1414,7 @@ Export-ModuleMember -Function Invoke-RestMethod
     $env:APPDATA = $originalAppData
     $env:LOCALAPPDATA = $originalLocalAppData
     $env:FIREFOX_FLOATING_URLBAR_URL = $originalRemoteArchive
-    Remove-Variable -Scope Global -Name floatingUrlbarRemoteMode, floatingUrlbarRemoteDownloads -ErrorAction SilentlyContinue
+    Remove-Variable -Scope Global -Name floatingUrlbarRemoteMode, floatingUrlbarRemoteDownloads, floatingUrlbarRemoteArchive -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $temp -Recurse -Force
 }
 # Expected failing child processes must not become the suite's exit code.

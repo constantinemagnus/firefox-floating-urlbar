@@ -6,22 +6,23 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync(path.join(__dirname, "../JS/replace-new-tab.uc.js"), "utf8");
 
-for (const [lineEnding, newline] of [["LF", "\n"], ["CRLF", "\r\n"]]) {
-    test(`remote installers and archives include every required installer input (${lineEnding})`, () => {
-        const read = file => fs.readFileSync(path.join(__dirname, "..", file), "utf8").replace(/\r?\n/g, newline);
-        const bashFiles = read("install-remote.sh").match(/for file in ([\s\S]*?); do/)[1]
-            .replace(/\\\r?\n/g, " ").trim().split(/\s+/);
-        const windowsFiles = [...read("install-remote.ps1").match(/foreach \(\$file in @\(([^)]+)\)/)[1].matchAll(/'([^']+)'/g)].map(m => m[1]);
-        const packageFiles = read("packaging/build-installers.sh").match(/files=\(([^)]+)\)/)[1].trim().split(/\s+/);
-        const shared = ["fx-autoconfig.conf", "JS/replace-new-tab.uc.js", "CSS/firefox-floating-urlbar.uc.css"];
-        assert.deepEqual(bashFiles.toSorted(), ["install.sh", "uninstall.sh", "lib.sh", "autoconfig.sh", ...shared].toSorted());
-        assert.deepEqual(windowsFiles.toSorted(), ["install.ps1", ...shared].toSorted());
-        for (const file of new Set([...bashFiles, ...windowsFiles])) {
-            assert.ok(packageFiles.includes(file), `archive missing ${file}`);
-            assert.ok(fs.existsSync(path.join(__dirname, "..", file)), `installer input missing: ${file}`);
-        }
-    });
-}
+test("remote installers download one archive and release archives include every installer input", () => {
+    const read = file => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
+    const archive = "https://codeload.github.com/constantinemagnus/firefox-floating-urlbar";
+    assert.ok(read("install-remote.sh").includes(`${archive}/tar.gz/refs/heads/main`));
+    assert.ok(read("install-remote.ps1").includes(`${archive}/zip/refs/heads/main`));
+    for (const file of ["install-remote.sh", "install-remote.ps1"]) {
+        assert.doesNotMatch(read(file), /api\.github\.com/, file);
+    }
+    // Source archives skip demo media, which keeps the one-command download small.
+    assert.match(read(".gitattributes"), /^assets\/ export-ignore$/m);
+    const packageFiles = read("packaging/build-installers.sh").match(/files=\(([^)]+)\)/)[1].trim().split(/\s+/);
+    for (const file of ["install.sh", "uninstall.sh", "lib.sh", "autoconfig.sh", "install.ps1", "fx-autoconfig.conf",
+        "JS/replace-new-tab.uc.js", "CSS/firefox-floating-urlbar.uc.css"]) {
+        assert.ok(packageFiles.includes(file), `archive missing ${file}`);
+        assert.ok(fs.existsSync(path.join(__dirname, "..", file)), `installer input missing: ${file}`);
+    }
+});
 
 test("non-Latin Ctrl/Cmd+L and K preserve current-tab navigation and modifier checks", () => {
     for (const platform of ["Linux", "Darwin"]) {
@@ -42,6 +43,43 @@ test("non-Latin Ctrl/Cmd+L and K preserve current-tab navigation and modifier ch
                 assert.equal(s.active(), false);
             }
         }
+    }
+});
+
+test("Latin alternative layouts match the typed letter, not the physical key", () => {
+    // Dvorak: physical K types "t", physical L types "n". Colemak: physical L types "i".
+    for (const [key, code] of [["t", "KeyK"], ["n", "KeyL"], ["i", "KeyL"]]) {
+        const s = setup({ compactControls: true, separateSearchBar: "searchbar", prefs: { "uc.floatingurlbar.compact": true } });
+        s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+        let searchMode = 0;
+        s.gURLBar.searchModeShortcut = () => { searchMode++; };
+        const event = s.key(key, { code, ctrlKey: true });
+        assert.equal(event.defaultPrevented, undefined, key);
+        assert.equal(searchMode, 0, key);
+        assert.equal(s.active(), false, key);
+    }
+    // Dvorak's L is physical P; it still opens the current-tab bar.
+    const s = setup();
+    s.key("l", { code: "KeyP", ctrlKey: true }, () => s.input.focus());
+    assert.equal(s.active(), true);
+    assert.equal(s.where({}), "current");
+});
+
+test("a shortcut claimed by the page neither freezes the address nor leaves a session", () => {
+    for (const shortcut of ["l", "k"]) {
+        let updates = 0;
+        const s = setup({ configureUrlbar(bar) {
+            bar.setURI = function () { updates++; return "native update"; };
+        } });
+        s.key(shortcut, { ctrlKey: true }); // The page handled it; Firefox never focuses the bar.
+        const update = { uri: { spec: "https://palette.example/next" }, dueToTabSwitch: false, dueToSessionRestore: false };
+        assert.equal(s.gURLBar.setURI(update), "native update");
+        assert.equal(updates, 1);
+        s.advance(1000);
+        assert.equal(s.active(), false);
+        // A late native focus behaves like a normal click-focused bar.
+        s.input.focus();
+        assert.equal(s.bar.matches(`[floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold])`), false);
     }
 });
 
@@ -198,7 +236,8 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
     elements.get("navigator-toolbox").querySelectorAll = () => captions;
     if (compactControls) {
         for (const id of ["sidebar-container", "nav-bar", "nav-bar-overflow-button", "nav-bar-customization-target", "urlbar-container",
-            "back-button", "forward-button", "stop-reload-button", "downloads-button", "fixture-browser-action", "unified-extensions-button"]) {
+            "back-button", "forward-button", "stop-reload-button", "downloads-button", "fixture-browser-action", "unified-extensions-button",
+            "widget-overflow-fixed-list", "print-button"]) {
             elements.set(id, new Element(id));
         }
         elements.get("sidebar-container").clientWidth = 180;
@@ -2461,24 +2500,63 @@ test("sidebar dismissal leaves controls, popup interactions and native layouts a
     }
 });
 
-test("native overflow never occupies the compact header, even with the obsolete preference enabled", () => {
+test("populated overflow remains native and the stylesheet leaves its opener visible", () => {
+    const css = fs.readFileSync(path.join(__dirname, "../CSS/firefox-floating-urlbar.uc.css"), "utf8");
+    assert.doesNotMatch(css, /#nav-bar-overflow-button\s*\{[^}]*display:\s*none/);
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    s.widget("nav-bar").setAttribute("nonemptyoverflow");
+    const print = s.widget("print-button");
+    s.widget("widget-overflow-fixed-list").appendChild(print);
+    s.resizeSidebar(180);
+    assert.equal(print.parent.id, "widget-overflow-fixed-list");
+    assert.equal(print.hasAttribute("floatingurlbar-compact-control"), false);
+    // Pinned overflow items stay one click away, without revealing the toolbar.
+    assert.equal(s.widget("nav-bar-overflow-button").hasAttribute("floatingurlbar-compact-control"), true);
+});
+
+test("available overflow joins the compact header and leaves when empty", () => {
+    const source = fs.readFileSync(path.join(__dirname, "../JS/replace-new-tab.uc.js"), "utf8");
+    assert.match(source, /attributeFilter: \[[^\]]*"nonemptyoverflow"[^\]]*\]/, "overflow changes must resync the header");
     for (const compact of [false, true]) {
-        const s = setup({ compactControls: true, prefs: {
-            "uc.floatingurlbar.compact": compact,
-            "uc.floatingurlbar.compact.overflow": true
-        } });
+        const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": compact } });
         const button = s.widget("nav-bar-overflow-button");
         const navbar = s.widget("nav-bar");
         for (const available of [true, false, true]) {
             available ? navbar.setAttribute("nonemptyoverflow") : navbar.removeAttribute("nonemptyoverflow");
             s.resizeSidebar(180);
-            assert.equal(button.hasAttribute("floatingurlbar-compact-control"), false);
-            assert.equal(button.style.getPropertyValue("--floatingurlbar-compact-column"), "");
+            const inHeader = compact && available;
+            assert.equal(button.hasAttribute("floatingurlbar-compact-control"), inHeader);
+            // Menu, back, forward and reload fill the first row of four; overflow starts the next.
+            assert.equal(button.style.getPropertyValue("--floatingurlbar-compact-column"), inHeader ? "0" : "");
+            assert.equal(button.style.getPropertyValue("--floatingurlbar-compact-row"), inHeader ? "1" : "");
             assert.equal(button.style.getPropertyValue("display"), "");
             assert.equal(s.widget("back-button").style.getPropertyValue("--floatingurlbar-compact-column"), compact ? "1" : "");
-            assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), compact ? "80px" : "");
+            assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"),
+                compact ? (available ? "116px" : "80px") : "");
         }
     }
+});
+
+test("overflow follows the regular header buttons, before pinned extensions", () => {
+    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    s.widget("nav-bar").setAttribute("nonemptyoverflow");
+    const slot = id => {
+        const style = s.widget(id).style;
+        return [style.getPropertyValue("--floatingurlbar-compact-row"), style.getPropertyValue("--floatingurlbar-compact-column")].join(",");
+    };
+    // Header: menu, Extensions, back, forward, reload, overflow, pinned extension (four columns).
+    s.toolbarOrder(["back-button", "forward-button", "stop-reload-button", "urlbar-container",
+        "downloads-button", "fixture-browser-action", "unified-extensions-button"]);
+    assert.deepEqual(["unified-extensions-button", "stop-reload-button", "nav-bar-overflow-button", "fixture-browser-action"].map(slot),
+        ["0,1", "1,0", "1,1", "1,2"]);
+    // Extensions moved among regular buttons stay in place; overflow follows the last regular one.
+    s.toolbarOrder(["back-button", "fixture-browser-action", "forward-button", "urlbar-container"]);
+    assert.deepEqual(["back-button", "fixture-browser-action", "forward-button", "nav-bar-overflow-button"].map(slot),
+        ["0,1", "0,2", "0,3", "1,0"]);
+    // Without regular buttons, overflow follows a leading Extensions button.
+    s.toolbarOrder(["urlbar-container", "fixture-browser-action", "unified-extensions-button"]);
+    assert.deepEqual(["unified-extensions-button", "nav-bar-overflow-button", "fixture-browser-action"].map(slot),
+        ["0,1", "0,2", "0,3"]);
 });
 
 test("compact header gaps open the native toolbar menu without replacing other context menus", () => {

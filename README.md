@@ -214,7 +214,7 @@ uc.floatingurlbar.compact = true
 
 Then use expanded vertical tabs on either side. Disable Firefox's sidebar expand-on-hover setting.
 
-- **Buttons:** Pinned extensions appear automatically. In **Customize Toolbar**, move other buttons before the address field to add them to the compact header.
+- **Buttons:** Pinned extensions appear automatically. In **Customize Toolbar**, move other buttons before the address field to add them to the compact header. When toolbar items overflow, the overflow (») menu joins the header too.
 - **Editing:** Click the sidebar address field to edit in the current tab. Ctrl+T, Ctrl+L, and Ctrl+K still use the centered bar.
 - **Site controls:** Search engines, site information, permissions, and sharing indicators remain available from the centered bar.
 - **Toolbar:** Hold the pointer still near the top edge to reveal the normal toolbar.
@@ -244,9 +244,9 @@ Restart Firefox and check the Browser Console (`Ctrl+Shift+J`).
 
 Disable other URL-bar or toolbar customizations that may conflict.
 
-**Remote installer hits a GitHub API limit**
+**"Another AutoConfig configuration exists" (LibreWolf and similar)**
 
-Use a local checkout or the manual installation method.
+Some browsers ship their own AutoConfig, and the installer won't replace it. Set up [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) by following its instructions, then rerun the installer with `--profile` (`-ProfilePath` on Windows); it reuses the existing loader.
 
 When reporting a problem, include your Firefox version and relevant Browser Console messages.
 

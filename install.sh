@@ -96,7 +96,5 @@ Notes:
   - If you have other CSS that changes URL bar behaviour (floating/centred URL
     bar mods, theme packs), disable it so the two don't fight.
   - Switch the feature off without uninstalling: set uc.floatingurlbar.enabled to false.
-  - If you ran an older version of this script, check that browser.urlbar.openintab
-    in about:config is what you expect (reset it if you never set it).
   - Remove the URL-bar customization with ./uninstall.sh; it offers optional cleanup of fx-autoconfig installed by us.
 NOTES

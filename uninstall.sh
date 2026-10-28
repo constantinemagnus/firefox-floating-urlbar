@@ -74,12 +74,12 @@ remove_installed() {
         return
     fi
 
-    # Only keep a backup if the installed file differs from this repo's copy,
-    # i.e. it was edited locally.
+    # Only keep a backup if the installed file differs from this copy: it may
+    # have been edited locally, or come from another release.
     if [[ ! -f "$original" ]] || ! cmp -s "$installed" "$original"; then
         local backup
         backup="$(backup_file "$installed")" || return 1
-        echo "  backed up locally modified file to $(basename "$backup")"
+        echo "  kept a backup because it differs from this release: $(basename "$backup")"
     fi
 
     rm -f "$installed"
