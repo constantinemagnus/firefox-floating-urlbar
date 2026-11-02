@@ -1,1 +1,7 @@
 assets/ export-ignore
+
+# Keep GitHub's language stats focused on the userChrome mod itself.
+tests/** linguist-detectable=false
+packaging/** linguist-detectable=false
+*.sh linguist-detectable=false
+*.ps1 linguist-detectable=false
