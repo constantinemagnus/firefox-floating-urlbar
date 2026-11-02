@@ -172,9 +172,15 @@ run_install
 printf '// another mod\n' > "$profile/chrome/other.uc.js"
 if run_uninstall --remove-autoconfig; then fail 'cleanup ignored another customization'; fi
 [[ -f "$(utils)/boot.sys.mjs" ]] || fail 'loader removed despite another customization'
+# Catches: the same check missing scripts linked in from a dotfiles repository.
+mv "$profile/chrome/other.uc.js" "$TEST_DIR/linked.uc.js"
+ln -s "$TEST_DIR/linked.uc.js" "$profile/chrome/other.uc.js"
+if run_uninstall --remove-autoconfig; then fail 'cleanup ignored a linked customization'; fi
+[[ -f "$(utils)/boot.sys.mjs" ]] || fail 'loader removed despite a linked customization'
 
-# Catches: full cleanup leaving our files behind, or removing the profile itself.
-make_case cleanup
+# Catches: full cleanup leaving our files behind, removing the profile itself, or
+# glob characters in the profile path making our own files look like other mods.
+make_case 'cleanup [2]'
 run_install
 run_uninstall --remove-shared-autoconfig --firefox-dir "$firefox"
 [[ ! -e "$(utils)" && ! -e "$firefox/config.js" && ! -e "$firefox/defaults/pref/config-prefs.js" &&

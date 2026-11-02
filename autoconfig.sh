@@ -178,10 +178,13 @@ ensure_autoconfig() (
 remove_autoconfig() {
     local profile="$1" firefox_dir="$2" shared="$3" utils="$1/chrome/utils" file other=""
     # Other scripts and styles may depend on this loader, even after our two files go.
+    # Links count too (dotfile setups); relative paths keep glob characters in the
+    # profile path from acting as patterns.
     if [[ -d "$profile/chrome" ]]; then
-        other="$(find "$profile/chrome" -path "$utils" -prune -o -type f \
-            \( -iname '*.js' -o -iname '*.mjs' -o -iname '*.css' \) \
-            ! -path "$profile/chrome/userChrome.css" ! -path "$profile/chrome/userContent.css" -print)"
+        other="$(cd -- "$profile/chrome" && find . -path ./utils -prune -o \( -type l -o \
+            \( -type f \( -iname '*.js' -o -iname '*.mjs' -o -iname '*.css' \) \
+            ! -path ./userChrome.css ! -path ./userContent.css \) \) -print)" ||
+            die "Cannot inspect other customizations; keeping fx-autoconfig."
     fi
     [[ -z "$other" ]] || die "Other customization found; keeping fx-autoconfig: $other"
     if (( shared )); then
