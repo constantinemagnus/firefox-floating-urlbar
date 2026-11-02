@@ -230,7 +230,10 @@ try {
         Copy-Item "$repo/install.ps1" "$childScript/install.ps1"
         Set-Content "$childFirefox/firefox.exe" 'fixture'
         Set-Content "$childScript/fx-autoconfig.conf" "AUTOCONFIG_COMMIT=second`nAUTOCONFIG_ZIP_SHA256=0000"
+        # Windows PowerShell 5.1 turns redirected native stderr into a terminating error under 'Stop'.
+        $ErrorActionPreference = 'Continue'
         & $interpreter -NoProfile -NonInteractive -File "$childScript/install.ps1" -StartupOnly -FirefoxDirectory $childFirefox -ArchivePath $script:archive 2>$null
+        $ErrorActionPreference = 'Stop'
         Assert-That ($LASTEXITCODE -ne 0 -and -not (Test-Path "$childFirefox/config.js")) 'elevated child skipped the checksum'
         Set-Content "$childScript/fx-autoconfig.conf" "AUTOCONFIG_COMMIT=second`nAUTOCONFIG_ZIP_SHA256=$($AutoconfigPin.AUTOCONFIG_ZIP_SHA256)"
         & $interpreter -NoProfile -NonInteractive -File "$childScript/install.ps1" -StartupOnly -FirefoxDirectory $childFirefox -ArchivePath $script:archive
