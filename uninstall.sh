@@ -55,7 +55,6 @@ fi
 
 [[ -d "$PROFILE" ]] || die "Profile does not exist: $PROFILE"
 PROFILE="$(cd -- "$PROFILE" && pwd -P)"
-require_profile_destinations "$PROFILE"
 
 RUNNING=0
 if firefox_running; then

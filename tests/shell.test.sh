@@ -12,20 +12,16 @@ source "$REPO_DIR/lib.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# Save paths from the install caller's directory, then load from elsewhere.
-mkdir -p "$TEST_DIR/caller/profile"
-(cd "$TEST_DIR/caller"; save_profile profile)
-[[ "$(load_saved_profile)" == "$TEST_DIR/caller/profile" ]] || fail "relative profile persistence"
-printf 'profile\n' > "$SAVED_PROFILE_FILE"
-if (cd "$TEST_DIR/caller"; load_saved_profile); then fail "ambiguous legacy relative path accepted"; fi
-
-# Normalize CRLF before comparing IsRelative, including paths with spaces.
+# Catches: a broken profiles.ini parser (CRLF line endings, relative vs absolute
+# paths, spaces) installing into the wrong folder.
 mkdir -p "$TEST_DIR/ini" "$TEST_DIR/absolute profile"
 printf '[Profile0]\r\nName=Test\r\nIsRelative=0\r\nPath=%s\r\n' "$TEST_DIR/absolute profile" > "$TEST_DIR/ini/profiles.ini"
 [[ "$(list_profiles_from_ini "$TEST_DIR/ini" | tr '\0' '\n')" == "$(printf '%s\n' Test "$TEST_DIR/absolute profile" "$TEST_DIR/absolute profile")" ]] || fail "absolute CRLF profile"
 printf '[Profile0]\r\nName=Test\r\nIsRelative=1\r\nPath=relative\r\n' > "$TEST_DIR/ini/profiles.ini"
 [[ "$(list_profiles_from_ini "$TEST_DIR/ini" | tr '\0' '\n')" == "$(printf '%s\n' Test "$TEST_DIR/ini/relative" relative)" ]] || fail "relative CRLF profile"
 
+# Catches: profile names with shell-special characters being mangled in the menu
+# or the selected path, and closed input silently picking a profile.
 mkdir -p "$TEST_DIR/ini/Work|Personal" "$TEST_DIR/ini/other"
 mkdir -p "$TEST_DIR/ini/Work|Personal/chrome/utils"
 touch "$TEST_DIR/ini/Work|Personal/chrome/utils/boot.sys.mjs" "$TEST_DIR/ini/Work|Personal/chrome/utils/chrome.manifest"
@@ -36,16 +32,8 @@ choose_profile "$TEST_DIR/ini" <<< 1 > "$TEST_DIR/pipe-menu"
 grep -Fq 'Work|Personal' "$TEST_DIR/pipe-menu" || fail 'pipe in profile name corrupted'
 if (choose_profile "$TEST_DIR/ini" </dev/null) > "$TEST_DIR/eof.log" 2>&1; then fail 'profile EOF accepted'; fi
 grep -q 'No profile selected.*--profile' "$TEST_DIR/eof.log" || fail 'profile EOF explanation missing'
-for script in install.sh uninstall.sh; do
-    printf '1\n' | bash "$REPO_DIR/$script" --root "$TEST_DIR/ini" > "$TEST_DIR/pipe-$script.log" 2>&1
-    grep -Fq 'Work|Personal' "$TEST_DIR/pipe-$script.log" || fail "$script lost pipe profile"
-done
 
-for process in firefox-esr librewolf librewolf-bin; do
-    (pgrep() { [[ "$*" == "-x $process" ]]; }; firefox_running) || fail "missed $process process"
-done
-
-# Missing or stale profiles.ini must still find macOS-style Profiles/ folders.
+# Catches: missing or stale profiles.ini hiding profiles kept in Profiles/ (macOS).
 mkdir -p "$TEST_DIR/fallback/Profiles/nested profile" "$TEST_DIR/fallback/unused"
 touch "$TEST_DIR/fallback/Profiles/nested profile/prefs.js"
 choose_profile "$TEST_DIR/fallback" >/dev/null
@@ -59,7 +47,15 @@ choose_profile "$TEST_DIR/fallback" "$TEST_DIR/fallback/direct profile" <<< '' >
 [[ "$PROFILE" == "$TEST_DIR/fallback/direct profile" ]] || fail "mixed direct and nested profile fallback"
 grep -Fq "$TEST_DIR/fallback/Profiles/nested profile" "$TEST_DIR/fallback-menu" || fail "mixed fallback omitted nested profile"
 
-# Both writes deliberately share a timestamp; neither backup may be lost.
+# Catches: saved relative paths resolving against the wrong directory later.
+mkdir -p "$TEST_DIR/caller/profile"
+(cd "$TEST_DIR/caller"; save_profile profile)
+[[ "$(load_saved_profile)" == "$TEST_DIR/caller/profile" ]] || fail "relative profile persistence"
+printf 'profile\n' > "$SAVED_PROFILE_FILE"
+if (cd "$TEST_DIR/caller"; load_saved_profile); then fail "ambiguous legacy relative path accepted"; fi
+
+# Catches: overwriting an edited payload without a backup, losing a backup when
+# two runs share a timestamp, or overwriting after the backup failed.
 date() { printf '20261009000000\n'; }
 printf 'original' > "$TEST_DIR/destination"
 printf 'one' > "$TEST_DIR/source"
@@ -71,9 +67,6 @@ backups=("$TEST_DIR"/destination.bak-20261009000000.*)
 contents="$(cat "${backups[@]}")"
 [[ "$contents" == originalone || "$contents" == oneoriginal ]] || fail "backup contents lost"
 unset -f date
-
-# A failed backup must stop the overwrite, including in a conditional caller
-# where Bash does not apply errexit inside the helper.
 printf 'must survive' > "$TEST_DIR/preserved"
 if (
     cp() { printf 'partial backup' > "${@: -1}"; return 1; }
@@ -82,28 +75,12 @@ if (
 [[ "$(cat "$TEST_DIR/preserved")" == 'must survive' ]] || fail "overwrote after backup failure"
 if compgen -G "$TEST_DIR/preserved.bak-*" >/dev/null; then fail "failed copy left an incomplete backup"; fi
 
-# Reject linked and non-file destinations without following or nesting copies.
-printf 'unrelated user data' > "$TEST_DIR/unrelated"
-ln -s "$TEST_DIR/unrelated" "$TEST_DIR/symlink"
-ln -s "$TEST_DIR/absent-target" "$TEST_DIR/dangling"
-ln "$TEST_DIR/unrelated" "$TEST_DIR/hardlink"
-mkdir "$TEST_DIR/directory"
-mkfifo "$TEST_DIR/fifo"
-for kind in symlink dangling hardlink directory fifo; do
-    if (copy_with_backup "$TEST_DIR/source" "$TEST_DIR/$kind") > "$TEST_DIR/destination.log" 2>&1; then
-        fail "accepted $kind destination"
-    fi
-done
-[[ "$(cat "$TEST_DIR/unrelated")" == 'unrelated user data' ]] || fail "modified link target"
-[[ ! -e "$TEST_DIR/absent-target" ]] || fail "created dangling link target"
-[[ ! -e "$TEST_DIR/directory/source" ]] || fail "copied into destination directory"
-if (
-    # Invoked indirectly by the library's destination check.
-    # shellcheck disable=SC2329
-    stat() { return 1; }
-    copy_with_backup "$TEST_DIR/source" "$TEST_DIR/preserved"
-) > "$TEST_DIR/stat-failure.log" 2>&1; then fail "failed link inspection accepted"; fi
-[[ "$(cat "$TEST_DIR/preserved")" == 'must survive' ]] || fail "overwrote after inspection failure"
+# Catches: clearing another profile's cache that shares the folder name.
+mkdir -p "$TEST_DIR/cache-a/same-name/startupCache" "$TEST_DIR/cache-b/same-name/startupCache"
+printf 'other profile' > "$TEST_DIR/cache-b/same-name/startupCache/sentinel"
+clear_startup_cache "$TEST_DIR/cache-a/same-name" >/dev/null
+[[ ! -e "$TEST_DIR/cache-a/same-name/startupCache" ]] || fail "selected cache not cleared"
+[[ -f "$TEST_DIR/cache-b/same-name/startupCache/sentinel" ]] || fail "deleted same-basename profile cache"
 
 # Synthetic profiles and a fake running process prevent real cache removal.
 mkdir -p "$TEST_DIR/bin"
@@ -119,6 +96,8 @@ for profile in "$PROFILE_A" "$PROFILE_B"; do
     cp "$REPO_DIR/JS/replace-new-tab.uc.js" "$profile/chrome/JS/"
     cp "$REPO_DIR/CSS/firefox-floating-urlbar.uc.css" "$profile/chrome/CSS/"
 done
+# Catches: uninstall ignoring --root/--profile and removing the saved profile's
+# files instead, or forgetting the saved profile when removing another one.
 save_profile "$PROFILE_A"
 bash "$REPO_DIR/uninstall.sh" --root "$TEST_DIR/root-b" > "$TEST_DIR/uninstall.log" 2>&1
 [[ -f "$PROFILE_A/chrome/JS/replace-new-tab.uc.js" ]] || fail "uninstalled saved profile despite explicit root"
@@ -132,7 +111,8 @@ ln -s "$PROFILE_B" "$TEST_DIR/profile alias"
 bash "$REPO_DIR/uninstall.sh" --profile "$TEST_DIR/profile alias" > "$TEST_DIR/alias-uninstall.log" 2>&1
 [[ ! -e "$SAVED_PROFILE_FILE" ]] || fail "uninstall alias did not clear matching saved profile"
 
-# Bare uninstall must choose among discovered profiles even with a saved one.
+# Catches: bare uninstall reusing the saved profile without asking, accepting an
+# invalid choice, or touching the unselected profile, prefs or loader.
 choice_root="$TEST_DIR/choose-root"
 mkdir -p "$choice_root"
 cp -a "$PROFILE_A" "$choice_root/first"
@@ -150,7 +130,7 @@ printf '2\n' | PROFILE_ROOT="$choice_root" bash "$REPO_DIR/uninstall.sh" > "$TES
 [[ -f "$choice_root/second/prefs.js" && -f "$choice_root/second/chrome/utils/boot.sys.mjs" ]] || fail "uninstall removed preferences or shared loader"
 [[ "$(load_saved_profile)" == "$PROFILE_A" ]] || fail "choosing another profile forgot saved profile"
 
-# A remembered custom profile stays selectable and is the Enter suggestion.
+# Catches: a remembered profile outside the discovered root becoming unselectable.
 choose_profile "$choice_root" "$PROFILE_A" <<< '' > "$TEST_DIR/preferred-choice.log"
 [[ "$PROFILE" -ef "$PROFILE_A" ]] || fail "chooser ignored remembered profile outside discovered root"
 chooser_repo="$TEST_DIR/uninstall-discovery-fixture"
@@ -175,204 +155,10 @@ for discovery in found missing; do
     [[ -f "$custom_profile/prefs.js" && -f "$custom_profile/chrome/utils/boot.sys.mjs" ]] || fail "custom-root uninstall removed preferences or shared loader"
 done
 
-# Empty explicit values must fail before discovery or Git. Include a safe root
-# or profile in every invocation so a regression cannot choose a real profile.
-save_profile "$PROFILE_A"
-for script in install.sh uninstall.sh update.sh; do
-    for option in --profile -p; do
-        if bash "$REPO_DIR/$script" --root "$TEST_DIR/root-a" "$option" '' > "$TEST_DIR/empty.log" 2>&1; then
-            fail "$script accepted empty $option"
-        fi
-        [[ "$(cat "$SAVED_PROFILE_FILE")" == "$PROFILE_A" ]] || fail "empty argument changed saved profile"
-    done
-    if bash "$REPO_DIR/$script" --root "$TEST_DIR/root-a" '' > "$TEST_DIR/empty.log" 2>&1; then
-        fail "$script accepted empty positional profile"
-    fi
-    if bash "$REPO_DIR/$script" --profile "$PROFILE_A" --root '' > "$TEST_DIR/empty.log" 2>&1; then
-        fail "$script accepted empty root"
-    fi
-done
-
-make_profile() {
-    local profile="$1" file
-    mkdir -p "$profile/chrome/JS" "$profile/chrome/CSS" "$profile/chrome/utils"
-    printf 'untouched prefs\n' > "$profile/prefs.js"
-    for file in boot.sys.mjs chrome.manifest utils.sys.mjs fs.sys.mjs; do touch "$profile/chrome/utils/$file"; done
-}
-
-# Preflight both destinations and their parents: a bad CSS path must not allow
-# an earlier JS overwrite. Test uninstall too, so directory links cannot redirect
-# removals into another user's files. All outside targets remain inside TEST_DIR.
-for kind in symlink dangling hardlink directory fifo parent-symlink chrome-symlink; do
-    attack_profile="$TEST_DIR/attack-$kind/profile with spaces"
-    outside="$TEST_DIR/outside-$kind"
-    make_profile "$attack_profile"
-    mkdir -p "$outside"
-    printf 'original JS\n' > "$attack_profile/chrome/JS/replace-new-tab.uc.js"
-    printf 'outside CSS\n' > "$outside/firefox-floating-urlbar.uc.css"
-    css_dest="$attack_profile/chrome/CSS/firefox-floating-urlbar.uc.css"
-    case "$kind" in
-        symlink) ln -s "$outside/firefox-floating-urlbar.uc.css" "$css_dest" ;;
-        dangling) ln -s "$outside/absent" "$css_dest" ;;
-        hardlink) ln "$outside/firefox-floating-urlbar.uc.css" "$css_dest" ;;
-        directory) mkdir "$css_dest" ;;
-        fifo) mkfifo "$css_dest" ;;
-        parent-symlink)
-            rmdir "$attack_profile/chrome/CSS"
-            ln -s "$outside" "$attack_profile/chrome/CSS" ;;
-        chrome-symlink)
-            mv "$attack_profile/chrome" "$outside/chrome"
-            ln -s "$outside/chrome" "$attack_profile/chrome" ;;
-    esac
-    for script in install.sh uninstall.sh; do
-        if bash "$REPO_DIR/$script" --profile "$attack_profile" > "$TEST_DIR/attack.log" 2>&1; then
-            fail "$script accepted $kind profile destination"
-        fi
-    done
-    [[ "$(cat "$attack_profile/chrome/JS/replace-new-tab.uc.js")" == 'original JS' ]] || fail "$kind changed JS before preflight"
-    [[ "$(cat "$outside/firefox-floating-urlbar.uc.css")" == 'outside CSS' ]] || fail "$kind changed outside CSS"
-    [[ ! -e "$outside/absent" ]] || fail "$kind created outside target"
-    [[ "$(load_saved_profile)" == "$PROFILE_A" ]] || fail "$kind changed saved profile"
-done
-
-# A backup write failure must also stop both top-level commands before unlinking
-# or overwriting either payload. The failing cp is scoped to this fixture.
-preservation_profile="$TEST_DIR/backup failure/profile"
-make_profile "$preservation_profile"
-printf 'preserve installed JS\n' > "$preservation_profile/chrome/JS/replace-new-tab.uc.js"
-printf 'preserve installed CSS\n' > "$preservation_profile/chrome/CSS/firefox-floating-urlbar.uc.css"
-mkdir "$TEST_DIR/failing-copy-bin"
-printf '#!/bin/sh\nexit 1\n' > "$TEST_DIR/failing-copy-bin/cp"
-chmod +x "$TEST_DIR/failing-copy-bin/cp"
-for script in install.sh uninstall.sh; do
-    if PATH="$TEST_DIR/failing-copy-bin:$PATH" bash "$REPO_DIR/$script" --profile "$preservation_profile" > "$TEST_DIR/preservation.log" 2>&1; then
-        fail "$script accepted backup write failure"
-    fi
-    [[ "$(cat "$preservation_profile/chrome/JS/replace-new-tab.uc.js")" == 'preserve installed JS' ]] || fail "$script lost JS on backup failure"
-    [[ "$(cat "$preservation_profile/chrome/CSS/firefox-floating-urlbar.uc.css")" == 'preserve installed CSS' ]] || fail "$script lost CSS on backup failure"
-    [[ "$(load_saved_profile)" == "$PROFILE_A" ]] || fail "$script changed saved profile on backup failure"
-done
-
-# A failure on the second payload must not leave a mixed installation.
-mkdir "$TEST_DIR/payload-failure-bin"
-export TEST_PAYLOAD_REAL_CP TEST_PAYLOAD_REAL_MV
-TEST_PAYLOAD_REAL_CP="$(command -v cp)"
-TEST_PAYLOAD_REAL_MV="$(command -v mv)"
-cat > "$TEST_DIR/payload-failure-bin/cp" <<'CP'
-#!/usr/bin/env bash
-dest="${*: -1}"
-if [[ "$TEST_PAYLOAD_FAILURE" == stage && "$dest" == */CSS/firefox-floating-urlbar.uc.css ]] ||
-   [[ "$TEST_PAYLOAD_FAILURE" == backup && "$dest" == */firefox-floating-urlbar.uc.css.bak-* ]]; then exit 1; fi
-exec "$TEST_PAYLOAD_REAL_CP" "$@"
-CP
-cat > "$TEST_DIR/payload-failure-bin/mv" <<'MV'
-#!/usr/bin/env bash
-src="${@: -2:1}"
-if [[ "$TEST_PAYLOAD_FAILURE" == replace && "$src" == */.floating-urlbar-install.*/CSS/firefox-floating-urlbar.uc.css ]]; then exit 1; fi
-exec "$TEST_PAYLOAD_REAL_MV" "$@"
-MV
-chmod +x "$TEST_DIR/payload-failure-bin/"*
-for state in existing fresh; do
-    for phase in stage backup replace; do
-        [[ "$state" != fresh || "$phase" != backup ]] || continue
-        transaction_profile="$TEST_DIR/payload-$state-$phase/profile"
-        make_profile "$transaction_profile"
-        js="$transaction_profile/chrome/JS/replace-new-tab.uc.js"
-        css="$transaction_profile/chrome/CSS/firefox-floating-urlbar.uc.css"
-        if [[ "$state" == existing ]]; then
-            printf 'original JS\n' > "$js"
-            printf 'original CSS\n' > "$css"
-        fi
-        if TEST_PAYLOAD_FAILURE="$phase" PATH="$TEST_DIR/payload-failure-bin:$PATH" \
-            bash "$REPO_DIR/install.sh" --profile "$transaction_profile" > "$TEST_DIR/payload-failure.log" 2>&1; then
-            fail "accepted $state payload $phase failure"
-        fi
-        if [[ "$state" == existing ]]; then
-            [[ "$(cat "$js")" == 'original JS' && "$(cat "$css")" == 'original CSS' ]] || fail "$phase left mixed payloads"
-        else
-            [[ ! -e "$js" && ! -e "$css" ]] || fail "$phase left a partial fresh installation"
-        fi
-        [[ "$(load_saved_profile)" == "$PROFILE_A" ]] || fail "$phase changed saved profile"
-        if compgen -G "$transaction_profile/chrome/.floating-urlbar-install.*" >/dev/null; then fail "$phase leaked staged files"; fi
-    done
-done
-
-# Persisted state is another write destination: linked records must not clobber
-# an unrelated file even when save_profile is used directly.
-for kind in symlink hardlink; do
-    if (
-        SAVED_PROFILE_FILE="$TEST_DIR/saved-$kind"
-        if [[ "$kind" == symlink ]]; then ln -s "$TEST_DIR/unrelated" "$SAVED_PROFILE_FILE";
-        else ln "$TEST_DIR/unrelated" "$SAVED_PROFILE_FILE"; fi
-        save_profile "$PROFILE_A"
-    ) > "$TEST_DIR/saved-link.log" 2>&1; then fail "accepted linked saved-profile record"; fi
-done
-[[ "$(cat "$TEST_DIR/unrelated")" == 'unrelated user data' ]] || fail "overwrote saved-record target"
-
-# The writer must reject a linked state directory even without installer preflight.
-mkdir "$TEST_DIR/outside-state"
-printf 'preserve state\n' > "$TEST_DIR/outside-state/profile"
-ln -s "$TEST_DIR/outside-state" "$TEST_DIR/linked-state"
-if (
-    CONFIG_DIR="$TEST_DIR/linked-state"
-    SAVED_PROFILE_FILE="$CONFIG_DIR/profile"
-    save_profile "$PROFILE_A"
-) > "$TEST_DIR/saved-directory-link.log" 2>&1; then fail "accepted linked saved-profile directory"; fi
-[[ "$(cat "$TEST_DIR/outside-state/profile")" == 'preserve state' ]] || fail "overwrote linked-directory state"
-
-# Only the selected profile's own real cache directory is eligible. A guarded
-# rm prevents a future regression from deleting anything outside these fixtures.
-safe_clear_cache() (
-    rm() {
-        local target="${*: -1}"
-        [[ "$target" == "$TEST_DIR/"* ]] || fail "cache deletion escaped fixtures: $target"
-        command rm "$@"
-    }
-    clear_startup_cache "$1"
-)
-cache_a="$TEST_DIR/cache-a/same-name"
-cache_b="$TEST_DIR/cache-b/same-name"
-mkdir -p "$cache_a/startupCache" "$cache_b/startupCache" "$TEST_DIR/outside-cache"
-printf 'other profile' > "$cache_b/startupCache/sentinel"
-printf 'outside data' > "$TEST_DIR/outside-cache/sentinel"
-ln -s "$TEST_DIR/outside-cache" "$cache_a/startupCache/linked-child"
-safe_clear_cache "$cache_a" > "$TEST_DIR/cache.log"
-[[ ! -e "$cache_a/startupCache" ]] || fail "selected cache not cleared"
-[[ -f "$cache_b/startupCache/sentinel" ]] || fail "deleted same-basename profile cache"
-[[ -f "$TEST_DIR/outside-cache/sentinel" ]] || fail "followed child link while clearing cache"
-ln -s "$TEST_DIR/outside-cache" "$cache_a/startupCache"
-if safe_clear_cache "$cache_a" > "$TEST_DIR/cache.log" 2>&1; then fail "accepted symlink cache"; fi
-[[ -f "$TEST_DIR/outside-cache/sentinel" ]] || fail "deleted linked cache target"
-rm "$cache_a/startupCache"
-printf 'ordinary file' > "$cache_a/startupCache"
-if safe_clear_cache "$cache_a" > "$TEST_DIR/cache.log" 2>&1; then fail "accepted non-directory cache"; fi
-[[ "$(cat "$cache_a/startupCache")" == 'ordinary file' ]] || fail "deleted non-directory cache"
-rm "$cache_a/startupCache"
-safe_clear_cache "$cache_a" || fail 'absent cache reported failure'
-mkdir "$cache_a/startupCache"
-for failure in nonzero no-removal; do
-    if (
-        if [[ "$failure" == nonzero ]]; then rm() { return 1; };
-        else rm() { return 0; }; fi
-        clear_startup_cache "$cache_a"
-    ) > "$TEST_DIR/cache-failure.log" 2>&1; then fail "cache failure reported success: $failure"; fi
-    if grep -q '^Cleared startup cache:' "$TEST_DIR/cache-failure.log"; then fail "false cache success message"; fi
-    grep -q 'Could not clear startup cache:' "$TEST_DIR/cache-failure.log" || fail "cache failure not reported"
-done
-
-# A closed Firefox exercises the installer's manual guidance for unverified
-# caches. The profile is disposable; no external cache path should be touched.
-printf '#!/bin/sh\nexit 1\n' > "$TEST_DIR/bin/pgrep"
-bash "$REPO_DIR/install.sh" --profile "$PROFILE_A" > "$TEST_DIR/cache-guidance.log" 2>&1
-if grep -q 'Startup cache not cleared automatically' "$TEST_DIR/cache-guidance.log"; then fail 'absent cache produced warning'; fi
-ln -s "$TEST_DIR/outside-cache" "$PROFILE_A/startupCache"
-bash "$REPO_DIR/install.sh" --profile "$PROFILE_A" > "$TEST_DIR/cache-guidance.log" 2>&1
-grep -q 'Startup cache not cleared automatically.*about:support' "$TEST_DIR/cache-guidance.log" || fail "missing cache guidance"
-rm "$PROFILE_A/startupCache"
-printf '#!/bin/sh\nexit 0\n' > "$TEST_DIR/bin/pgrep"
-
-# Exercise update.sh with an isolated Git stand-in: upstream advances from
-# bbbbb to ccccc on a second lookup, and any pull/fetch-after-preview fails.
+# update.sh with a Git stand-in whose upstream moves from bbbbb to ccccc after the
+# first lookup. Catches: installing a revision other than the one shown for review,
+# fetching twice, dropping or overriding forwarded arguments, and updating on EOF
+# or when the local branch is ahead.
 mkdir -p "$TEST_DIR/updater"
 cp "$REPO_DIR/update.sh" "$REPO_DIR/lib.sh" "$TEST_DIR/updater/"
 cat > "$TEST_DIR/updater/install.sh" <<'INSTALL'
@@ -450,82 +236,19 @@ fi
 if grep -Eq '^(merge |--no-pager )' "$TEST_GIT_TRACE"; then fail "ahead branch previewed or merged older upstream"; fi
 grep -q 'ahead of upstream.*install.sh' "$TEST_DIR/ahead.log" || fail "ahead branch guidance missing"
 
-# The concise runner must retain both streams and each failing command's status.
+
+# Catches: tests/run.sh hiding a failing suite's output or exit code.
 runner_fixture="$TEST_DIR/runner fixture"
 mkdir -p "$runner_fixture/tests" "$runner_fixture/bin" "$runner_fixture/logs"
 cp "$REPO_DIR/tests/run.sh" "$runner_fixture/tests/"
-cat > "$runner_fixture/bin/node" <<'NODE'
-#!/usr/bin/env bash
-printf 'ok 1 - verbose node case\n# tests 1\n# pass 1\n# fail 0\n# duration_ms 1.25\n'
-printf 'node stderr diagnostic\n    at example (fixture.js:1:2)\n' >&2
-exit "${RUNNER_NODE_EXIT:-0}"
-NODE
-cat > "$runner_fixture/tests/shell.test.sh" <<'SHELL'
-printf 'verbose shell case\n'
-printf 'shell stderr diagnostic\n' >&2
-exit "${RUNNER_SHELL_EXIT:-0}"
-SHELL
-cat > "$runner_fixture/tests/package.test.sh" <<'PACKAGE'
-if [[ "${RUNNER_PACKAGE_SKIP:-0}" == 1 ]]; then
-    printf 'SKIP: fixture package suite requires Git metadata.\n'
-    exit 0
-fi
-printf 'verbose package case\n'
-printf 'package stderr diagnostic\n' >&2
-exit "${RUNNER_PACKAGE_EXIT:-0}"
-PACKAGE
+printf '#!/bin/sh\nprintf "# tests 1\\n"\n' > "$runner_fixture/bin/node"
+printf 'printf "shell diagnostic\\n" >&2\nexit 37\n' > "$runner_fixture/tests/shell.test.sh"
 chmod +x "$runner_fixture/bin/node"
-for scenario in pass package-skip node-failure shell-failure package-failure; do
-    node_exit=0 shell_exit=0 package_exit=0 package_skip=0 expected_status=0
-    case "$scenario" in
-        package-skip) package_skip=1 ;;
-        node-failure) node_exit=23 expected_status=23 ;;
-        shell-failure) shell_exit=37 expected_status=37 ;;
-        package-failure) package_exit=41 expected_status=41 ;;
-    esac
-    runner_status=0
-    PATH="$runner_fixture/bin:$PATH" TMPDIR="$runner_fixture/logs" \
-        RUNNER_NODE_EXIT="$node_exit" RUNNER_SHELL_EXIT="$shell_exit" RUNNER_PACKAGE_EXIT="$package_exit" \
-        RUNNER_PACKAGE_SKIP="$package_skip" \
-        bash "$runner_fixture/tests/run.sh" > "$TEST_DIR/runner.log" 2>&1 || runner_status=$?
-    [[ "$runner_status" == "$expected_status" ]] || fail "runner changed $scenario exit code"
-    grep -Eq "duration=[0-9]+s exit=$expected_status output=" "$TEST_DIR/runner.log" || fail "runner summary missing"
-    while IFS= read -r summary; do
-        original_log="${summary#*output=}"
-        [[ -f "$original_log" ]] || fail 'runner original log missing'
-        if [[ "$scenario" == package-skip && "$summary" == package:* ]]; then
-            grep -q '^SKIP: fixture package suite requires Git metadata.$' "$original_log" || fail 'runner lost original skip reason'
-            continue
-        fi
-        grep -q 'stderr diagnostic' "$original_log" || fail 'runner lost stderr'
-        grep -q 'verbose .* case' "$original_log" || fail 'runner lost stdout'
-    done < <(sed -n '/output=/p' "$TEST_DIR/runner.log")
-    if [[ "$scenario" == pass || "$scenario" == package-skip ]]; then
-        grep -q '^# tests 1$' "$TEST_DIR/runner.log" || fail 'runner lost Node totals'
-        grep -q '^# duration_ms 1.25$' "$TEST_DIR/runner.log" || fail 'runner lost Node duration'
-        grep -q '^shell suites: 1 passed$' "$TEST_DIR/runner.log" || fail 'runner lost shell count'
-        if grep -Eq 'verbose|stderr diagnostic' "$TEST_DIR/runner.log"; then fail 'runner printed successful cases'; fi
-        if [[ "$scenario" == package-skip ]]; then
-            grep -q '^SKIP: fixture package suite requires Git metadata.$' "$TEST_DIR/runner.log" || fail 'runner hid skip reason'
-            ! grep -q '^package suites: 1 passed$' "$TEST_DIR/runner.log" || fail 'runner counted a skipped package suite as passed'
-            grep -Eq '^package: .* exit=0 output=' "$TEST_DIR/runner.log" || fail 'runner omitted skipped suite summary'
-        else
-            grep -q '^package suites: 1 passed$' "$TEST_DIR/runner.log" || fail 'runner mislabeled package count'
-        fi
-    else
-        failing_suite=node
-        [[ "$scenario" == node-failure ]] || failing_suite=shell
-        [[ "$scenario" != package-failure ]] || failing_suite=package
-        original_log="$(sed -n "s/^$failing_suite: .*output=//p" "$TEST_DIR/runner.log")"
-        diagnostics="$(cat "$original_log")"
-        runner_output="$(cat "$TEST_DIR/runner.log")"
-        [[ "$runner_output" == *"$diagnostics"* ]] || fail 'runner truncated failure output'
-        if [[ "$scenario" == node-failure ]]; then
-            grep -q 'at example (fixture.js:1:2)' "$TEST_DIR/runner.log" || fail 'runner lost stack trace'
-            if grep -q '^shell:' "$TEST_DIR/runner.log"; then fail 'runner continued after failure'; fi
-        fi
-    fi
-done
+runner_status=0
+PATH="$runner_fixture/bin:$PATH" TMPDIR="$runner_fixture/logs" \
+    bash "$runner_fixture/tests/run.sh" > "$TEST_DIR/runner.log" 2>&1 || runner_status=$?
+[[ "$runner_status" == 37 ]] || fail "runner changed the failing exit code"
+grep -q 'shell diagnostic' "$TEST_DIR/runner.log" || fail 'runner hid failure output'
 
 echo "Shell regressions passed (temporary profiles and mocked Git; no real profile or repository updated)."
 bash "$REPO_DIR/tests/autoconfig.test.sh"

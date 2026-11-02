@@ -164,7 +164,7 @@ Optional cleanup can also remove fx-autoconfig components installed by this proj
 | Remove profile loader too | `--remove-autoconfig` | `-RemoveAutoconfig` |
 | Remove shared startup files too | `--remove-shared-autoconfig --firefox-dir DIR` | `-RemoveSharedAutoconfig -FirefoxDirectory DIR` |
 
-Shared AutoConfig startup files affect **all profiles using that Firefox installation**. Remove them only if no other profile or user needs AutoConfig. The installer refuses cleanup when ownership cannot be verified or files were modified.
+Shared AutoConfig startup files affect **all profiles using that Firefox installation**. Remove them only if no other profile or user needs AutoConfig. Cleanup removes only files this project installed, and stops if other scripts or styles in the profile still need the loader.
 
 ## Preferences
 

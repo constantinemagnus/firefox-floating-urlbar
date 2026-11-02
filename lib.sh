@@ -223,9 +223,7 @@ require_autoconfig_profile() {
 save_profile() {
     local absolute
     absolute="$(cd -- "$1" && pwd -P)" || die "Profile does not exist: $1"
-    require_directory_destination "$CONFIG_DIR"
     mkdir -p "$CONFIG_DIR"
-    require_file_destination "$SAVED_PROFILE_FILE"
     printf '%s\n' "$absolute" > "$SAVED_PROFILE_FILE"
 }
 
@@ -243,38 +241,6 @@ load_saved_profile() {
 # File helpers
 # ---------------------------------------------------------------
 
-# Refuse links and special files before any backup or destructive operation.
-# Multiple hard links may refer to user files outside the selected profile.
-require_file_destination() {
-    local dest="$1" links
-    [[ ! -L "$dest" && ( ! -e "$dest" || -f "$dest" ) ]] ||
-        die "Unsupported destination (expected an unlinked regular file): $dest"
-    if [[ -f "$dest" ]]; then
-        if [[ "$(uname -s)" == Darwin ]]; then
-            links="$(stat -f %l "$dest")" || die "Cannot inspect destination: $dest"
-        else
-            links="$(stat -c %h -- "$dest")" || die "Cannot inspect destination: $dest"
-        fi
-        [[ "$links" == 1 ]] || die "Refusing hardlinked destination: $dest"
-    fi
-}
-
-require_directory_destination() {
-    [[ ! -L "$1" && ( ! -e "$1" || -d "$1" ) ]] ||
-        die "Unsupported destination directory: $1"
-}
-
-# PROFILE is resolved physically by callers; its chrome subdirectories must
-# not redirect writes or removals outside that profile. Check both files first.
-require_profile_destinations() {
-    local profile="$1" dir
-    for dir in "$profile/chrome" "$profile/chrome/JS" "$profile/chrome/CSS"; do
-        require_directory_destination "$dir"
-    done
-    require_file_destination "$profile/chrome/JS/replace-new-tab.uc.js"
-    require_file_destination "$profile/chrome/CSS/firefox-floating-urlbar.uc.css"
-}
-
 backup_file() {
     local file="$1" backup
     # Reserve the name atomically; timestamps alone collide on repeated runs.
@@ -290,7 +256,6 @@ backup_file() {
 copy_with_backup() {
     local src="$1" dest="$2"
 
-    require_file_destination "$dest"
     if [[ -f "$dest" ]] && ! cmp -s "$src" "$dest"; then
         local backup
         backup="$(backup_file "$dest")" || return 1
@@ -301,92 +266,20 @@ copy_with_backup() {
     echo "  installed $(basename "$dest")"
 }
 
-# Stage profile payloads together; a final shared-startup failure rolls them back too.
-install_payloads() (
-    local source_dir="$1" profile="$2" after_install="${3:-:}" staging file dest i j failed=0 restore_failed=0
-    local files=(JS/replace-new-tab.uc.js CSS/firefox-floating-urlbar.uc.css)
-    if (( $# > 3 )); then files=("${@:4}"); fi
-    local backups=() applied=()
-    require_profile_destinations "$profile"
-    staging="$(mktemp -d "$profile/chrome/.floating-urlbar-install.XXXXXX")" || return 1
-    trap 'rm -rf -- "$staging"' EXIT
+# Installation is idempotent: after a failure, rerunning the installer finishes it.
+install_payloads() {
+    local source_dir="$1" profile="$2" file
+    for file in JS/replace-new-tab.uc.js CSS/firefox-floating-urlbar.uc.css; do
+        copy_with_backup "$source_dir/$file" "$profile/chrome/$file" || die "Could not install $file; rerun the installer."
+    done
+}
 
-    for i in "${!files[@]}"; do
-        file="${files[$i]}"; dest="$profile/chrome/$file"
-        backups[i]=""
-        require_directory_destination "${dest%/*}"
-        require_file_destination "$dest"
-        if [[ ! -L "$source_dir/$file" && -f "$dest" ]] && cmp -s "$source_dir/$file" "$dest"; then continue; fi
-        mkdir -p "$staging/${file%/*}" || return 1
-        if [[ -f "$dest" && ! -L "$source_dir/$file" ]]; then cp -p -- "$dest" "$staging/$file" || return 1; fi
-        cp -P -- "$source_dir/$file" "$staging/$file" || return 1
-    done
-    for i in "${!files[@]}"; do
-        file="${files[$i]}"; dest="$profile/chrome/$file"
-        if [[ -f "$staging/$file" && -f "$dest" ]]; then
-            case "${file##*/}" in
-                .floating-urlbar-source|.floating-urlbar-files)
-                    # Our own records only need a rollback copy for this transaction.
-                    backups[i]="$staging/$file.previous"
-                    cp -p -- "$dest" "${backups[$i]}" || return 1
-                    continue ;;
-            esac
-            backups[i]="$(backup_file "$dest")" || return 1
-            echo "  Backed up existing file to: $(basename "${backups[$i]}")"
-        fi
-    done
-    for i in "${!files[@]}"; do
-        file="${files[$i]}"; dest="$profile/chrome/$file"
-        [[ -f "$staging/$file" ]] || continue
-        applied+=("$i")
-        if ! (require_profile_destinations "$profile";
-              require_directory_destination "${dest%/*}";
-              require_file_destination "$dest") || ! mv -f -- "$staging/$file" "$dest"; then
-            failed=1
-            break
-        fi
-        echo "  installed $(basename "$dest")"
-    done
-    if (( failed )) || ! "$after_install"; then
-        warn "Payload installation failed; restoring the previous files."
-        for (( j=${#applied[@]}-1; j>=0; j-- )); do
-            i="${applied[$j]}"; dest="$profile/chrome/${files[$i]}"
-            if ! (require_profile_destinations "$profile";
-                  require_directory_destination "${dest%/*}"); then
-                restore_failed=1; warn "Cannot restore $dest; backup: ${backups[$i]:-no previous file}"
-                continue
-            fi
-            # Remove only a link installed by this transaction, without following it.
-            if [[ -L "$dest" && -L "$source_dir/${files[$i]}" &&
-                  "$(readlink "$dest")" == "$(readlink "$source_dir/${files[$i]}")" ]]; then
-                rm -f -- "$dest" || { restore_failed=1; warn "Could not remove installed link: $dest"; continue; }
-            fi
-            if ! (require_file_destination "$dest"); then
-                restore_failed=1; warn "Cannot restore $dest; backup: ${backups[$i]:-no previous file}"
-            elif [[ -n "${backups[$i]}" ]]; then
-                mv -f -- "${backups[$i]}" "$dest" || { restore_failed=1; warn "Restore failed; recover $dest from ${backups[$i]}"; }
-            else
-                rm -f -- "$dest" || { restore_failed=1; warn "Could not remove incomplete payload: $dest"; }
-            fi
-        done
-        # Keep staging: it may hold the only copy of a previous ownership record.
-        if (( restore_failed )); then trap - EXIT; fi
-        return 1
-    fi
-)
-
-# Only remove a cache directly inside the physically resolved profile. External
-# local-data paths cannot be identified safely from the profile basename.
-# about:support > "Clear startup cache" handles those locations.
+# Caches outside the profile folder are left to about:support > "Clear startup cache".
 # Only call while Firefox is closed.
 clear_startup_cache() {
-    local profile dir
-    profile="$(cd -- "$1" && pwd -P)" || return 1
-    dir="$profile/startupCache"
-    [[ -e "$dir" || -L "$dir" ]] || return 0
-    [[ ! -L "$dir" && -d "$dir" ]] || return 1
-
-    if rm -rf -- "$dir" && [[ ! -e "$dir" && ! -L "$dir" ]]; then
+    local dir="$1/startupCache"
+    [[ -d "$dir" ]] || return 0
+    if rm -rf -- "$dir"; then
         echo "Cleared startup cache: $dir"
         return 0
     fi

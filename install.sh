@@ -55,9 +55,6 @@ fi
 
 [[ -d "$PROFILE" && -f "$PROFILE/prefs.js" ]] || die "Not an initialized Firefox profile: $PROFILE. Start Firefox once first."
 PROFILE="$(cd -- "$PROFILE" && pwd -P)"
-require_profile_destinations "$PROFILE"
-require_directory_destination "$CONFIG_DIR"
-require_file_destination "$SAVED_PROFILE_FILE"
 
 RUNNING=0
 if firefox_running; then
