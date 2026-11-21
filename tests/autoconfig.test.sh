@@ -60,7 +60,8 @@ CURL
 # directory read-only only through the -w check, see the sudo case below).
 cat > "$TEST_DIR/bin/sudo" <<'SUDO'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TEST_SUDO_TRACE"
+args="$*"
+printf '%s\n' "${args//$'\n'/ }" >> "$TEST_SUDO_TRACE"
 chmod u+w "$TEST_FIREFOX_LOCKED"
 "$@"; status=$?
 chmod u-w "$TEST_FIREFOX_LOCKED"
@@ -120,7 +121,7 @@ cp -R "$TEST_DIR/source-second" "$TEST_DIR/tampered"
 printf '// tampered\n' > "$TEST_DIR/tampered/fx-autoconfig-second/program/config.js"
 tar -czf "$TEST_DIR/tampered.tar.gz" -C "$TEST_DIR/tampered" fx-autoconfig-second
 if TEST_AUTOCONFIG_ARCHIVE="$TEST_DIR/tampered.tar.gz" run_install; then fail 'checksum mismatch accepted'; fi
-[[ ! -e "$firefox/config.js" && ! -e "$(utils)/boot.sys.mjs" ]] || fail 'files written after checksum mismatch'
+[[ ! -e "$firefox/config.js" && ! -e "$(utils)/boot.sys.mjs" && ! -e "$profile/chrome" ]] || fail 'files or folders written after checksum mismatch'
 
 # Catches: overwriting a loader the user installed themselves.
 make_case external
@@ -163,7 +164,8 @@ export TEST_FIREFOX_LOCKED="$firefox"
 chmod u-w "$firefox"
 run_install
 chmod u+w "$firefox"
-grep -q "config.js $firefox/config.js" "$TEST_SUDO_TRACE" || fail 'startup files not written through sudo'
+[[ "$(wc -l < "$TEST_SUDO_TRACE" | tr -d ' ')" == 1 ]] || fail 'startup files triggered multiple sudo calls'
+grep -q "$firefox" "$TEST_SUDO_TRACE" && cmp -s "$snapshot/program/config.js" "$firefox/config.js" || fail 'startup files not written through sudo'
 if grep -q "$profile" "$TEST_SUDO_TRACE"; then fail 'profile written through sudo'; fi
 
 # Catches: optional cleanup breaking other user scripts that rely on the loader.
@@ -177,6 +179,12 @@ mv "$profile/chrome/other.uc.js" "$TEST_DIR/linked.uc.js"
 ln -s "$TEST_DIR/linked.uc.js" "$profile/chrome/other.uc.js"
 if run_uninstall --remove-autoconfig; then fail 'cleanup ignored a linked customization'; fi
 [[ -f "$(utils)/boot.sys.mjs" ]] || fail 'loader removed despite a linked customization'
+# Catches: a dotfiles-symlinked userChrome.css falsely blocking loader cleanup.
+rm -f "$profile/chrome/other.uc.js"
+printf '/* userChrome */\n' > "$TEST_DIR/userChrome.css"
+ln -s "$TEST_DIR/userChrome.css" "$profile/chrome/userChrome.css"
+run_uninstall --remove-autoconfig
+[[ ! -e "$(utils)" && -L "$profile/chrome/userChrome.css" ]] || fail 'symlinked userChrome.css blocked or was removed by cleanup'
 
 # Catches: full cleanup leaving our files behind, removing the profile itself, or
 # glob characters in the profile path making our own files look like other mods.

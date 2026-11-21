@@ -41,12 +41,13 @@ find_profile_root() {
 }
 
 firefox_running() {
-    pgrep -x firefox >/dev/null 2>&1 ||
-    pgrep -x firefox-bin >/dev/null 2>&1 ||
-    pgrep -x firefox-esr >/dev/null 2>&1 ||
-    pgrep -x librewolf >/dev/null 2>&1 ||
-    pgrep -x librewolf-bin >/dev/null 2>&1 ||
-    pgrep -x Firefox >/dev/null 2>&1
+    local proc
+    for proc in firefox firefox-bin firefox-esr firefox-beta firefox-nightly \
+        firefox-develop firefox-developer-edition librewolf librewolf-bin \
+        Firefox "Firefox Nightly" "Firefox Developer Edition"; do
+        pgrep -x "$proc" >/dev/null 2>&1 && return 0
+    done
+    return 1
 }
 
 # ---------------------------------------------------------------
@@ -274,15 +275,47 @@ install_payloads() {
     done
 }
 
-# Caches outside the profile folder are left to about:support > "Clear startup cache".
-# Only call while Firefox is closed.
+# Clears the profile's startupCache and, for standard Linux/macOS profile roots,
+# the matching cache directory outside the profile folder. Only call while Firefox is closed.
 clear_startup_cache() {
-    local dir="$1/startupCache"
-    [[ -d "$dir" ]] || return 0
-    if rm -rf -- "$dir"; then
-        echo "Cleared startup cache: $dir"
-        return 0
+    local profile="$1"
+    if [[ -d "$profile" ]]; then
+        profile="$(cd -- "$profile" && pwd -P)"
     fi
-    warn "Could not clear startup cache: $dir"
-    return 1
+    local caches=("$profile/startupCache")
+    local linux_cache="${XDG_CACHE_HOME:-$HOME/.cache}/mozilla/firefox"
+    local linux_xdg="${XDG_CONFIG_HOME:-$HOME/.config}/mozilla/firefox"
+    local roots=(
+        "$HOME/.mozilla/firefox"
+        "$linux_xdg"
+        "$HOME/Library/Application Support/Firefox"
+    )
+    local cache_roots=(
+        "$linux_cache"
+        "$linux_cache"
+        "$HOME/Library/Caches/Firefox"
+    )
+    local i root resolved_root rel
+    for i in "${!roots[@]}"; do
+        root="${roots[$i]}"
+        [[ -d "$root" ]] || continue
+        resolved_root="$(cd -- "$root" && pwd -P)"
+        if [[ "$profile" == "$resolved_root/"* ]]; then
+            rel="${profile#"$resolved_root"/}"
+            caches+=("${cache_roots[$i]}/$rel/startupCache")
+            break
+        fi
+    done
+
+    local dir status=0
+    for dir in "${caches[@]}"; do
+        [[ -d "$dir" ]] || continue
+        if rm -rf -- "$dir"; then
+            echo "Cleared startup cache: $dir"
+        else
+            warn "Could not clear startup cache: $dir"
+            status=1
+        fi
+    done
+    return "$status"
 }

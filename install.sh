@@ -87,11 +87,13 @@ fi
 cat <<NOTES
 
 Notes:
-  - Ctrl+T (Cmd+T on macOS) opens the centred URL bar and submits the result
-    in a new tab. Ctrl+L still navigates in the current tab as normal. The +
-    button and File > New Tab remain unchanged.
-  - If you have other CSS that changes URL bar behaviour (floating/centred URL
-    bar mods, theme packs), disable it so the two don't fight.
+  - Ctrl+T opens the centered URL bar and loads the result in a new tab.
+    Ctrl+L opens the same bar in the current tab, and Ctrl+K opens centered
+    search (Cmd on macOS). The + button and File > New Tab remain unchanged.
+  - Enable optional compact mode by setting uc.floatingurlbar.compact to true
+    in about:config (with expanded vertical tabs).
+  - If you have other CSS that changes URL-bar behavior (floating/centered URL
+    bar mods, theme packs), disable it so the two don't conflict.
   - Switch the feature off without uninstalling: set uc.floatingurlbar.enabled to false.
-  - Remove the URL-bar customization with ./uninstall.sh; it offers optional cleanup of fx-autoconfig installed by us.
+  - Remove the customization with ./uninstall.sh; it offers optional cleanup of fx-autoconfig installed by us.
 NOTES

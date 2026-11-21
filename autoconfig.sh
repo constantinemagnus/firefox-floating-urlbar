@@ -99,15 +99,19 @@ install_autoconfig_startup() {
     done
     (( needed )) || return 0
     echo "Setting up shared AutoConfig startup files in $firefox_dir for ALL profiles (config.js and defaults/pref/config-prefs.js; AutoConfig sandbox disabled)."
-    as_firefox_owner "$firefox_dir" install -d -m755 "$firefox_dir/defaults/pref" || return 1
-    for file in "${STARTUP_FILES[@]}"; do
-        as_firefox_owner "$firefox_dir" install -m644 "$source/$file" "$firefox_dir/$file" || return 1
-    done
     # Startup files we did not create stay unowned, so uninstall never removes them.
-    if (( owned || ! existing )); then
-        printf '%s\n' "${STARTUP_FILES[@]}" |
-            as_firefox_owner "$firefox_dir" tee "$firefox_dir/$SHARED_MARKER" >/dev/null || return 1
-    fi
+    # shellcheck disable=SC2016 # Variables intentionally expand inside the elevated sh.
+    as_firefox_owner "$firefox_dir" sh -eu -c '
+        src="$1"; dst="$2"; marker="$3"; mark="$4"; shift 4
+        install -d -m755 "$dst/defaults/pref"
+        for f in "$@"; do
+            install -m644 "$src/$f" "$dst/$f"
+        done
+        if [ "$mark" = 1 ]; then
+            printf "%s\n" "$@" > "$dst/$marker"
+            chmod 644 "$dst/$marker"
+        fi
+    ' sh "$source" "$firefox_dir" "$SHARED_MARKER" "$(( owned || ! existing ))" "${STARTUP_FILES[@]}" || return 1
 }
 
 autoconfig_current() {
@@ -132,12 +136,12 @@ ensure_autoconfig() (
     fi
     firefox_dir="$(find_firefox_directory "$profile" "$firefox_dir")"
     autoconfig_current "$utils" "$firefox_dir" && return 0
-    mkdir -p "$utils" "$profile/chrome/resources"
 
     if source="$(packaged_autoconfig_directory "$firefox_dir")"; then
         [[ -f "$firefox_dir/config.js" && -f "$firefox_dir/defaults/pref/config-prefs.js" ]] ||
             die "Pacman-managed fx-autoconfig is missing its startup files in $firefox_dir. Reinstall the fx-autoconfig package."
         echo "Using pacman-managed fx-autoconfig modules."
+        mkdir -p "$utils" "$profile/chrome/resources"
         cp -- "$source/chrome.manifest" "$utils/chrome.manifest"
         for file in "${AUTOCONFIG_MODULES[@]}"; do ln -sfn -- "$source/$file" "$utils/$file"; done
         # Package upgrades update the links; the profile now has an external loader.
@@ -163,6 +167,7 @@ ensure_autoconfig() (
     done
 
     install_autoconfig_startup "$source/program" "$firefox_dir"
+    mkdir -p "$utils" "$profile/chrome/resources"
     # The marker goes first, so an interrupted copy is still recognized as ours.
     printf 'pending\n' > "$utils/$PROFILE_MARKER"
     for file in chrome.manifest "${AUTOCONFIG_MODULES[@]}"; do
@@ -181,9 +186,9 @@ remove_autoconfig() {
     # Links count too (dotfile setups); relative paths keep glob characters in the
     # profile path from acting as patterns.
     if [[ -d "$profile/chrome" ]]; then
-        other="$(cd -- "$profile/chrome" && find . -path ./utils -prune -o \( -type l -o \
-            \( -type f \( -iname '*.js' -o -iname '*.mjs' -o -iname '*.css' \) \
-            ! -path ./userChrome.css ! -path ./userContent.css \) \) -print)" ||
+        other="$(cd -- "$profile/chrome" && find . -path ./utils -prune -o \
+            ! -path ./userChrome.css ! -path ./userContent.css \
+            \( -type l -o \( -type f \( -iname '*.js' -o -iname '*.mjs' -o -iname '*.css' \) \) \) -print)" ||
             die "Cannot inspect other customizations; keeping fx-autoconfig."
     fi
     [[ -z "$other" ]] || die "Other customization found; keeping fx-autoconfig: $other"

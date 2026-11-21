@@ -75,12 +75,23 @@ if (
 [[ "$(cat "$TEST_DIR/preserved")" == 'must survive' ]] || fail "overwrote after backup failure"
 if compgen -G "$TEST_DIR/preserved.bak-*" >/dev/null; then fail "failed copy left an incomplete backup"; fi
 
-# Catches: clearing another profile's cache that shares the folder name.
+# Catches: clearing another profile's cache that shares the folder name, or
+# missing the matching external cache under a standard Linux Firefox root.
 mkdir -p "$TEST_DIR/cache-a/same-name/startupCache" "$TEST_DIR/cache-b/same-name/startupCache"
 printf 'other profile' > "$TEST_DIR/cache-b/same-name/startupCache/sentinel"
 clear_startup_cache "$TEST_DIR/cache-a/same-name" >/dev/null
 [[ ! -e "$TEST_DIR/cache-a/same-name/startupCache" ]] || fail "selected cache not cleared"
 [[ -f "$TEST_DIR/cache-b/same-name/startupCache/sentinel" ]] || fail "deleted same-basename profile cache"
+(
+    export HOME="$TEST_DIR/fake-home"
+    export XDG_CACHE_HOME="$TEST_DIR/fake-cache"
+    mkdir -p "$HOME/.mozilla/firefox/one.default" "$XDG_CACHE_HOME/mozilla/firefox/one.default/startupCache" \
+        "$XDG_CACHE_HOME/mozilla/firefox/two.default/startupCache"
+    printf 'other cache' > "$XDG_CACHE_HOME/mozilla/firefox/two.default/startupCache/sentinel"
+    clear_startup_cache "$HOME/.mozilla/firefox/one.default" >/dev/null
+    [[ ! -e "$XDG_CACHE_HOME/mozilla/firefox/one.default/startupCache" ]] || fail "external Linux startupCache not cleared"
+    [[ -f "$XDG_CACHE_HOME/mozilla/firefox/two.default/startupCache/sentinel" ]] || fail "cleared another profile's external cache"
+)
 
 # Synthetic profiles and a fake running process prevent real cache removal.
 mkdir -p "$TEST_DIR/bin"

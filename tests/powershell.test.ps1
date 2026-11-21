@@ -240,12 +240,38 @@ try {
         Assert-That ($LASTEXITCODE -eq 0 -and (Test-Path "$childFirefox/defaults/pref/config-prefs.js")) 'elevated child failed'
     }
 
-    # Catches: optional cleanup breaking other user scripts that rely on the loader.
+    # Catches: optional cleanup breaking other user scripts (including linked
+    # dotfiles folders) that rely on the loader, or nested files in utils/.
     New-Case 'shared other'
     Install-Case
     Set-Content "$ProfilePath/chrome/other.uc.js" '// another mod'
     Assert-Rejected { Uninstall-Case } 'cleanup ignored another customization'
     Assert-That (Test-Path "$utils/boot.sys.mjs") 'loader removed despite another customization'
+    Remove-Item "$ProfilePath/chrome/other.uc.js" -Force
+    $linkedMods = Join-Path $temp 'linked-mods'
+    [IO.Directory]::CreateDirectory($linkedMods) | Out-Null
+    $linkType = if ($env:OS -eq 'Windows_NT') { 'Junction' } else { 'SymbolicLink' }
+    $linkPath = Join-Path $ProfilePath 'chrome/linked-mods'
+    New-Item -ItemType $linkType -Path $linkPath -Target $linkedMods | Out-Null
+    try {
+        Assert-Rejected { Uninstall-Case } 'cleanup ignored a linked customization folder'
+        Assert-That (Test-Path "$utils/boot.sys.mjs") 'loader removed despite a linked customization folder'
+    } finally {
+        if ($env:OS -eq 'Windows_NT') {
+            & $env:ComSpec /d /v:off /c "rmdir `"$($linkPath.Replace('/', '\'))`""
+        } else {
+            Remove-Item -LiteralPath $linkPath -Force
+        }
+    }
+    # Catches: Microsoft Store (WindowsApps) Firefox failing with an opaque UAC error.
+    New-Case 'store'
+    $storeFirefox = Join-Path $temp 'WindowsApps/Mozilla.Firefox_1.0'
+    [IO.Directory]::CreateDirectory($storeFirefox) | Out-Null
+    Set-Content "$storeFirefox/firefox.exe" 'fixture'
+    $script:FirefoxDirectory = $storeFirefox
+    $storeError = ''
+    try { Install-Case } catch { $storeError = $_.Exception.Message }
+    Assert-That ($storeError -like '*WindowsApps*') 'WindowsApps Store Firefox did not report clear diagnostic'
 
     # Catches: full cleanup leaving our files behind, or removing the profile itself.
     New-Case 'cleanup'

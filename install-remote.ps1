@@ -6,6 +6,7 @@
 #
 # Override the archive with $env:FIREFOX_FLOATING_URLBAR_URL (mostly useful for tests).
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) "floating-urlbar-remote-$([Guid]::NewGuid().ToString('N'))"
 [IO.Directory]::CreateDirectory($temp) | Out-Null

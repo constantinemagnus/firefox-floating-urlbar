@@ -12,6 +12,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $AutoconfigPin = ConvertFrom-StringData (Get-Content -LiteralPath "$PSScriptRoot/fx-autoconfig.conf" -Raw)
 $AutoconfigModules = @('boot.sys.mjs', 'fs.sys.mjs', 'utils.sys.mjs', 'uc_api.sys.mjs', 'module_loader.mjs')
 
@@ -251,11 +252,22 @@ function Remove-ManagedAutoconfig([string]$SelectedProfile, [string]$ExplicitDir
     $chrome = Join-Path $SelectedProfile 'chrome'
     $utils = Join-Path $chrome 'utils'
     # Other scripts and styles may depend on this loader, even after our two files go.
+    # Links and junctions count too (dotfile setups).
     if (Test-Path -LiteralPath $chrome -PathType Container) {
-        $chromePath = (Get-Item -LiteralPath $chrome -Force).FullName
-        $other = @(Get-ChildItem -LiteralPath $chromePath -Recurse -File -Force | Where-Object {
-            $_.Extension -in @('.js', '.mjs', '.css') -and $_.DirectoryName -ne (Join-Path $chromePath 'utils') -and
-                -not ($_.DirectoryName -eq $chromePath -and $_.Name -in @('userChrome.css', 'userContent.css'))
+        $chromePath = (Get-Item -LiteralPath $chrome -Force).FullName.TrimEnd('\', '/')
+        $utilsPath = Join-Path $chromePath 'utils'
+        $utilsPrefix = $utilsPath + [IO.Path]::DirectorySeparatorChar
+        $other = @(Get-ChildItem -LiteralPath $chromePath -Recurse -Force | Where-Object {
+            $full = $_.FullName.TrimEnd('\', '/')
+            $parent = [IO.Path]::GetDirectoryName($full)
+            $inUtils = $full.Equals($utilsPath, [StringComparison]::OrdinalIgnoreCase) -or
+                $full.StartsWith($utilsPrefix, [StringComparison]::OrdinalIgnoreCase)
+            $isUserCss = $parent -and $parent.Equals($chromePath, [StringComparison]::OrdinalIgnoreCase) -and
+                ($_.Name -in @('userChrome.css', 'userContent.css'))
+            $isLink = [bool]($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
+            -not $inUtils -and -not $isUserCss -and (
+                $isLink -or (-not $_.PSIsContainer -and $_.Extension -in @('.js', '.mjs', '.css'))
+            )
         })
         if ($other.Count) { throw "Other customization found; keeping fx-autoconfig: $($other[0].FullName)" }
     }
@@ -303,6 +315,9 @@ function Ensure-Autoconfig([string]$SelectedProfile, [string]$ExplicitDirectory)
         throw "Existing incomplete loader in $utils; restore or move it aside before installing."
     }
     $directory = Find-FirefoxDirectory $SelectedProfile $ExplicitDirectory
+    if ($directory -match '(?i)[\\/]WindowsApps([\\/]|$)') {
+        throw 'Automatic first-time AutoConfig setup supports regular Firefox installations. Microsoft Store (WindowsApps) Firefox keeps its install folder read-only; install regular Firefox or set up an existing loader first.'
+    }
     if (Test-AutoconfigCurrent $utils $directory) { return }
     $temp = Join-Path ([IO.Path]::GetTempPath()) "floating-urlbar-$([Guid]::NewGuid().ToString('N'))"
     [IO.Directory]::CreateDirectory($temp) | Out-Null
@@ -403,7 +418,11 @@ function Invoke-FloatingUrlbarInstall {
         $ProfilePath = Select-FirefoxProfile $Root $preferredProfile
     }
     $ProfilePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ProfilePath)
-    if (-not (Test-Path -LiteralPath (Join-Path $ProfilePath 'prefs.js') -PathType Leaf)) {
+    if ($Uninstall) {
+        if (-not (Test-Path -LiteralPath $ProfilePath -PathType Container)) {
+            throw "Profile does not exist: $ProfilePath"
+        }
+    } elseif (-not (Test-Path -LiteralPath (Join-Path $ProfilePath 'prefs.js') -PathType Leaf)) {
         throw "Not an initialized Firefox profile: $ProfilePath. Start Firefox once first."
     }
     $payloads = [ordered]@{
