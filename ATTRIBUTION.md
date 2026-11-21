@@ -110,8 +110,9 @@ license. The fx-autoconfig files retain their MPL-2.0 terms.
 
 ## Demo imagery and website content
 
-`assets/demo.webp` and `assets/glass_look.png` are demonstration captures. They
-include Alexander Sinn's fox photograph from Unsplash, which is covered by the
+`assets/demo.webp`, `assets/glass_look.png`, and `assets/compact-demo.png` are
+demonstration captures. `assets/demo.webp` and `assets/glass_look.png` include
+Alexander Sinn's fox photograph from Unsplash, which is covered by the
 [Unsplash License](https://unsplash.com/license), not the project's MIT license.
 Photographer attribution is included here for provenance; the Unsplash License
 does not require it.
