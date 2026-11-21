@@ -7,7 +7,7 @@ A Zen-style floating URL bar for Firefox, with an optional compact vertical-tab 
 - **Ctrl+K** opens centered search.
 - **Compact mode** (optional) places the address field, toolbar buttons, and pinned extensions above Firefox's vertical tabs.
 
-Built as a single [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) script and stylesheet—no extension or full browser theme required.
+Built as a single [fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig) script and stylesheet, with no extension or full browser theme required.
 
 <p align="center">
   <img src="assets/demo.webp" alt="Floating URL bar demo" width="800">
@@ -32,7 +32,7 @@ On macOS, use **Cmd** instead of **Ctrl**. Firefox's own suggestion, search-engi
 - **Firefox 157+** (requires CSS anchor positioning and Firefox's split-popover URL bar; older releases and ESR are unsupported).
 - **[fx-autoconfig](https://github.com/MrOtherGuy/fx-autoconfig)** (installed automatically for regular Firefox installs; existing loaders are reused).
 
-Sandboxed installs—**Flatpak**, **Snap**, and **Microsoft Store (`WindowsApps`)**—keep Firefox's installation directory read-only, so automatic first-time AutoConfig setup isn't supported there. Set up AutoConfig separately first, then run the installer.
+Sandboxed installs (**Flatpak**, **Snap**, and **Microsoft Store (`WindowsApps`)**) keep Firefox's installation directory read-only, so automatic first-time AutoConfig setup isn't supported there. Set up AutoConfig separately first, then run the installer.
 
 > **Security note:** `fx-autoconfig` scripts run with full browser privileges. Review the files before installing.
 
@@ -40,7 +40,7 @@ Sandboxed installs—**Flatpak**, **Snap**, and **Microsoft Store (`WindowsApps`
 
 The installer copies the script and stylesheet into your chosen Firefox profile. If `fx-autoconfig` isn't already installed, it also installs the shared startup files and disables the AutoConfig sandbox (`general.config.sandbox_enabled=false`), which applies to **all profiles using that Firefox installation**.
 
-Run installers as your normal user—`sudo` or UAC is requested only when protected Firefox installation files need to be written.
+Run installers as your normal user. `sudo` or UAC is requested only when protected Firefox installation files need to be written.
 
 One-command installs download the latest `main` archive over HTTPS and trust this repository and GitHub. To review before running, use a local Git checkout or a tagged archive from [GitHub Releases](https://github.com/constantinemagnus/firefox-floating-urlbar/releases) (verified against `SHA256SUMS`).
 
@@ -164,7 +164,7 @@ Create any of these as **Boolean** preferences in `about:config`:
 | `uc.floatingurlbar.dim` | `true` | Dim the page behind the floating URL bar |
 | `uc.floatingurlbar.glass` | `false` | Experimental translucent appearance |
 | `uc.floatingurlbar.compact` | `false` | Move the address field and buttons above vertical tabs |
-| `uc.floatingurlbar.compact.hover-reveal` | `true` | Hover the top edge in compact mode to reveal the hidden top toolbar when content remains on it (clicking the top edge and F10/Alt still work when `false`) |
+| `uc.floatingurlbar.compact.hover-reveal` | `true` | Hover the top edge in compact mode to reveal the top toolbar when something remains on it (bookmarks, wide widgets, or top window controls). Set to `false` for click-only reveal (F10/Alt still work). |
 | `uc.floatingurlbar.compact.pins.manual` | `false` | Use Firefox's native pinned-tab height and resize handle in compact mode |
 | `uc.floatingurlbar.debug` | `false` | Log events and hook state to the Browser Console (`Ctrl+Shift+J`) |
 
@@ -199,7 +199,7 @@ Set `uc.floatingurlbar.compact = true`, turn on **expanded vertical tabs** (left
 - **Header buttons:** Visible toolbar buttons, pinned extensions, and the overflow (`»`) menu automatically appear in the compact header. Use **Customize Toolbar** to reorder or remove buttons; wide widgets (such as zoom or edit controls) remain on the revealed top toolbar.
 - **Address field:** Click the sidebar address field to expand and edit in the current tab (or float centered if `uc.floatingurlbar.float-on-click` is enabled). `Ctrl+T`, `Ctrl+L`, and `Ctrl+K` always open the centered bar.
 - **Site controls:** Search engines, site info, permissions, and sharing controls remain available from the centered bar.
-- **Top toolbar:** Stays inactive with no hover trigger when nothing remains on it. When a populated Bookmarks Toolbar, wide widgets, or top window controls (such as on macOS or narrow sidebars) are present, rest the pointer at the top edge (or click it) to reveal the toolbar. Set `uc.floatingurlbar.compact.hover-reveal = false` for click-only reveal.
+- **Top toolbar:** Disabled (with no hover trigger) when all buttons and window controls fit in the sidebar header and nothing remains at the top. If you have bookmarks on the Bookmarks Toolbar, wide widgets, or top window controls (on macOS or narrow sidebars), rest the pointer at the top edge or click it to reveal the toolbar. Set `uc.floatingurlbar.compact.hover-reveal = false` for click-only reveal.
 - **Window dragging & menubar:** Drag empty header, toolbar, or vertical-tab space. Press `F10` or `Alt` to access the native menubar on Windows/Linux.
 - **Pinned tabs:** Rows fit their contents automatically. Set `uc.floatingurlbar.compact.pins.manual = true` to restore Firefox's manual resize handle.
 
@@ -217,7 +217,7 @@ Set `uc.floatingurlbar.debug = true`, restart Firefox, and inspect the Browser C
 Disable other URL-bar or toolbar CSS/scripts that may conflict, and confirm you're on a supported Firefox version (157+).
 
 **"Another AutoConfig configuration exists" (LibreWolf and similar)**
-Some forks ship their own AutoConfig, which the installer won't overwrite. Follow [fx-autoconfig's instructions](https://github.com/MrOtherGuy/fx-autoconfig) to integrate the loader, then rerun the installer with `--profile` (`-ProfilePath` on Windows)—it reuses the existing loader.
+Some forks ship their own AutoConfig, which the installer won't overwrite. Follow [fx-autoconfig's instructions](https://github.com/MrOtherGuy/fx-autoconfig) to integrate the loader, then rerun the installer with `--profile` (`-ProfilePath` on Windows) to reuse the existing loader.
 
 **Flatpak, Snap, or Microsoft Store Firefox**
 These packages make Firefox's program directory read-only. Install AutoConfig separately (or use regular Firefox), then rerun the installer.
