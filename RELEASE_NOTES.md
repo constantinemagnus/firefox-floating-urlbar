@@ -1,12 +1,10 @@
-# v1.6.0 — Compact overflow menu and installer fixes
+# v1.7.0: Compact mode refinements, click-to-float, and installer updates
 
-- Compact mode shows Firefox's overflow (») button in the header whenever its menu has items, after the regular buttons and before pinned extensions. Items in the overflow menu were previously unreachable in compact mode. Some profiles start with items there; remove them in **Customize Toolbar** to hide the button.
-- Ctrl/Cmd+L and Ctrl/Cmd+K follow the typed letter on Latin layouts such as Dvorak and Colemak; other scripts still use the physical key. On Dvorak, Ctrl+T no longer opens search in compact mode.
-- Pages that handle Ctrl+K or Ctrl+L themselves, such as command palettes, no longer leave the address bar showing an outdated address.
-- Windows: installing AutoConfig into Program Files now requests administrator permission instead of failing with "Access denied", including paths with typographic apostrophes.
-- Windows: profiles or Firefox installs on disconnected drives are skipped instead of stopping the installer, and uninstall in Windows PowerShell 5.1 recognizes non-ASCII profile paths saved by PowerShell 7. The startup cache Firefox keeps in local app data is now cleared too.
-- If shared AutoConfig setup fails during a first-time install, the profile's loader files are rolled back and new folders removed. Updates no longer leave backups of the installer's own records, so uninstall can remove the loader folder.
-- One-command installers download a single repository archive instead of using the GitHub API, avoiding its rate limit.
-- Troubleshooting covers browsers that ship their own AutoConfig, such as LibreWolf.
+- **Click-to-float (`uc.floatingurlbar.float-on-click`):** New boolean preference (default `false`) that floats the URL bar centered when clicking the address field, navigating in the current tab.
+- **Compact header buttons:** All visible single-icon toolbar buttons (such as Account, Downloads, and Tab Search) now appear in the compact sidebar header alongside pinned extensions and the overflow menu.
+- **Content-aware compact top bar (`uc.floatingurlbar.compact.hover-reveal`):** Top-edge hover reveal is now disabled when nothing remains on the top toolbar, preventing accidental triggers over web pages. When a populated Bookmarks Toolbar, wide widgets, or top window controls (macOS or narrow sidebars) are present, resting the pointer at the top edge reveals only what remains (collapsing an empty navigation bar and hiding the `Import bookmarks...` button). Set `uc.floatingurlbar.compact.hover-reveal = false` for click-only reveal.
+- **Menubar and visual fixes:** Pressing `F10` or `Alt` in compact mode now reveals only the menubar without flashing an empty navigation bar underneath, and no longer places relocated window controls over `File` and `Edit` when the sidebar is on the left. Sidebar button popups no longer flash the top bar, and `Ctrl+K`/`Ctrl+L` no longer briefly flash search or site icons inside the sidebar address field.
+- **Instant floating transitions:** Removed `uc.floatingurlbar.animate`; the floating URL bar now opens and closes instantly across horizontal, compact, and click-to-float layouts on Firefox 157+.
+- **Installers and cleanup:** Simplified the Bash and PowerShell installers while improving parity: shared Linux/macOS AutoConfig setup batches into a single `sudo` prompt, external Linux/macOS startup caches are cleared automatically, symlinked customizations in `chrome/` are preserved during `--remove-autoconfig` / `-RemoveAutoconfig`, and Windows reports a clear message for unsupported Microsoft Store (`WindowsApps`) installs.
 
-After updating, restart Firefox and clear the startup cache through `about:support` if needed. Existing preferences remain unchanged.
+After updating, restart Firefox and clear the startup cache through `about:support` if needed. Existing preferences remain unchanged, except for the removed `uc.floatingurlbar.animate` preference.
