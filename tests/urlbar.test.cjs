@@ -65,6 +65,20 @@ test("Latin alternative layouts match the typed letter, not the physical key", (
     assert.equal(s.where({}), "current");
 });
 
+test("ordinary keystrokes without shortcut modifiers skip style and sidebar lookups", () => {
+    const s = setup({ compactControls: true, separateSearchBar: "searchbar", prefs: { "uc.floatingurlbar.compact": true } });
+    s.styleReads.length = 0;
+    for (const [key, code, mods] of [
+        ["k", "KeyK", {}],
+        ["l", "KeyL", {}],
+        ["k", "KeyK", { ctrlKey: true, shiftKey: true }],
+        ["j", "KeyJ", { ctrlKey: true }]
+    ]) {
+        s.key(key, { code, ...mods });
+    }
+    assert.equal(s.styleReads.length, 0);
+});
+
 test("a shortcut claimed by the page neither freezes the address nor leaves a session", () => {
     for (const shortcut of ["l", "k"]) {
         let updates = 0;
@@ -131,6 +145,11 @@ test("floating-state selector agrees with the stylesheet and the mock", () => {
     for (const cssSelector of cssSelectors) {
         assert.equal(normalize(cssSelector), normalize(selector));
     }
+    // Centered input container height must follow --floatingurlbar-height so overrides stay aligned.
+    assert.match(css, /> \.urlbar-input-container \{\s*height: var\(--floatingurlbar-height\) !important;/);
+    // F10/Alt menubar activation must expose only #toolbar-menubar, not the whole #navigator-toolbox.
+    assert.doesNotMatch(css, /#navigator-toolbox\[floatingurlbar-compact-ready\]:has\(\s*#toolbar-menubar/);
+    assert.match(css, /#navigator-toolbox\[floatingurlbar-compact-ready\]\[floatingurlbar-native-focus\] #toolbar-menubar/);
     const s = setup();
     for (const active of [false, true]) {
         for (const state of [null, "focused", "popover-open", "floatingurlbar-hold"]) {
@@ -1913,6 +1932,7 @@ test("compact menubar keys flush visibility before native handling, including he
 
 test("compact toolbar presses pin its reveal until release or unload", () => {
     const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     const attr = "floatingurlbar-compact-press";
     const middle = s.widget("urlbar-container");
     const held = () => (s.window.listeners.get("mouseup") || []).length;
@@ -1942,6 +1962,7 @@ test("compact toolbar presses pin its reveal until release or unload", () => {
 
 test("compact toolbar hold survives descendant blur and recovers a lost release", () => {
     const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     const attr = "floatingurlbar-compact-press";
     const middle = s.widget("urlbar-container");
     s.toolbox.emit("mousedown", { target: middle, button: 0 });
@@ -1960,15 +1981,29 @@ test("compact toolbar hold survives descendant blur and recovers a lost release"
     assert.equal((s.window.listeners.get("mousemove") || []).length, 0);
 });
 
-test("compact toolbar presses ignore other buttons, the header and the disabled preference", () => {
+test("compact toolbar presses ignore other buttons, the header, inactive layouts and the disabled preference", () => {
     const attr = "floatingurlbar-compact-press";
     const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
     const middle = s.widget("urlbar-container");
+    // Without the compact sidebar anchor (e.g. horizontal tabs or fullscreen), pressing does nothing.
+    s.toolbox.emit("mousedown", { target: middle, button: 0 });
+    assert.equal(s.toolbox.hasAttribute(attr), false);
+    assert.equal((s.window.listeners.get("mouseup") || []).length, 0);
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     s.toolbox.emit("mousedown", { target: middle, button: 2 });
     assert.equal(s.toolbox.hasAttribute(attr), false);
     s.toolbox.emit("mousedown", { target: { closest: () => s.bar }, button: 0 });
     assert.equal(s.toolbox.hasAttribute(attr), false);
+    // Clicking or hovering an active menubar must not also reveal #nav-bar underneath it.
+    const menubarItem = { closest: selector => selector.includes("#toolbar-menubar") ? { id: "toolbar-menubar" } : null };
+    s.toolbox.emit("mousedown", { target: menubarItem, button: 0 });
+    assert.equal(s.toolbox.hasAttribute(attr), false);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-reveal"), false);
+    s.toolbox.emit("mousemove", { target: menubarItem, clientX: 20, clientY: 1 });
+    s.advance(200);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-reveal"), false);
     const off = setup({ compactControls: true });
+    off.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     off.toolbox.emit("mousedown", { target: off.widget("urlbar-container"), button: 0 });
     assert.equal(off.toolbox.hasAttribute(attr), false);
 });
@@ -2030,11 +2065,13 @@ test("compact mode skips layout work while off and supports live preference togg
     assert.equal(s.widget("floatingurlbar-sidebar-placeholder"), undefined);
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), false);
     s.setPref("uc.floatingurlbar.compact", true);
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), true);
     assert.equal(s.widget("back-button").hasAttribute("floatingurlbar-compact-control"), true);
     assert.ok(s.widget("floatingurlbar-sidebar-placeholder"));
     s.ctrlT(); s.type("keep this query");
     s.toolbox.emit("mousedown", { button: 0 });
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-press"), true);
     s.setPref("uc.floatingurlbar.compact", false);
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), false);
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-press"), false);
@@ -2050,8 +2087,19 @@ test("compact mode skips layout work while off and supports live preference togg
     assert.equal(s.styleReads.length, 0);
     s.setPref("uc.floatingurlbar.compact", true);
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), true);
+    // Live sidebar.visibility changes to expand-on-hover clear compact state too.
+    s.key("Escape");
+    s.window.emit("mousedown", { target: s.input, button: 0 });
+    assert.equal(s.bar.hasAttribute("floatingurlbar-sidebar-editing"), true);
+    s.setPref("sidebar.visibility", "expand-on-hover");
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), false);
+    assert.equal(s.bar.hasAttribute("floatingurlbar-sidebar-editing"), false);
+    assert.equal(s.widget("floatingurlbar-sidebar-placeholder"), undefined);
+    s.setPref("sidebar.visibility", "always-show");
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), true);
     s.window.emit("unload");
     assert.equal(s.preferenceObservers.get("uc.floatingurlbar.compact").size, 0);
+    assert.equal(s.preferenceObservers.get("sidebar.visibility").size, 0);
 });
 
 test("missing native caption boxes leave compact controls and Ctrl+T working", () => {
@@ -2091,7 +2139,7 @@ test("compact captions use the native active instance and fall back when it cann
     assert.equal(nav.hasAttribute(attr), true);
     assert.equal(menu.hasAttribute(attr), false);
     assert.equal(offset(), "36px");
-    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "76px");
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "112px");
     s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     const target = { closest: selector => selector.includes("[floatingurlbar-compact-caption]") ? nav : null };
     s.toolbox.emit("mousemove", { target, clientX: 10, clientY: 1 });
@@ -2136,11 +2184,11 @@ test("permanent menubars reserve header space without shifting temporary menus",
         menu.rect.height = 28.5;
         s.resizeSidebar(180);
         assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "29px");
-        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "105px");
-        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "145px");
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "141px");
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "181px");
         menu.setAttribute("autohide", "true"); s.resizeSidebar(180);
         assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "0px");
-        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "76px");
+        assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "112px");
         menu.setAttribute("autohide", "false"); s.resizeSidebar(180);
         assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "29px");
         menu.setAttribute("collapsed", "true"); s.resizeSidebar(180);
@@ -2167,6 +2215,18 @@ test("compact hover uses the CSS strip height in restored and scaled layouts", (
         s.advance(300);
         assert.equal(s.toolbox.hasAttribute(attr), false);
     }
+    // With a permanent menubar, the reveal strip shifts directly below it.
+    const withMenu = setup({ compactControls: true, nativeCaptions: true, revealStripHeight: "3px",
+        prefs: { "uc.floatingurlbar.compact": true } });
+    withMenu.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    withMenu.widget("toolbar-menubar").rect.height = 29;
+    withMenu.resizeSidebar(180);
+    withMenu.toolbox.emit("mousemove", { clientX: 500, clientY: 1 });
+    withMenu.advance(200);
+    assert.equal(withMenu.toolbox.hasAttribute("floatingurlbar-compact-reveal"), false);
+    withMenu.toolbox.emit("mousemove", { clientX: 500, clientY: 29.5 });
+    withMenu.advance(200);
+    assert.equal(withMenu.toolbox.hasAttribute("floatingurlbar-compact-reveal"), true);
 });
 
 test("compact layout changes clear reveal and pending dwell without pointer movement", () => {
@@ -2519,6 +2579,7 @@ test("available overflow joins the compact header and leaves when empty", () => 
     assert.match(source, /attributeFilter: \[[^\]]*"nonemptyoverflow"[^\]]*\]/, "overflow changes must resync the header");
     for (const compact of [false, true]) {
         const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": compact } });
+        s.widget("downloads-button").setAttribute("hidden");
         const button = s.widget("nav-bar-overflow-button");
         const navbar = s.widget("nav-bar");
         for (const available of [true, false, true]) {
@@ -2544,11 +2605,11 @@ test("overflow follows the regular header buttons, before pinned extensions", ()
         const style = s.widget(id).style;
         return [style.getPropertyValue("--floatingurlbar-compact-row"), style.getPropertyValue("--floatingurlbar-compact-column")].join(",");
     };
-    // Header: menu, Extensions, back, forward, reload, overflow, pinned extension (four columns).
+    // Header: menu, Extensions, back, forward, reload, downloads, overflow, pinned extension (four columns).
     s.toolbarOrder(["back-button", "forward-button", "stop-reload-button", "urlbar-container",
         "downloads-button", "fixture-browser-action", "unified-extensions-button"]);
-    assert.deepEqual(["unified-extensions-button", "stop-reload-button", "nav-bar-overflow-button", "fixture-browser-action"].map(slot),
-        ["0,1", "1,0", "1,1", "1,2"]);
+    assert.deepEqual(["unified-extensions-button", "stop-reload-button", "downloads-button", "nav-bar-overflow-button", "fixture-browser-action"].map(slot),
+        ["0,1", "1,0", "1,1", "1,2", "1,3"]);
     // Extensions moved among regular buttons stay in place; overflow follows the last regular one.
     s.toolbarOrder(["back-button", "fixture-browser-action", "forward-button", "urlbar-container"]);
     assert.deepEqual(["back-button", "fixture-browser-action", "forward-button", "nav-bar-overflow-button"].map(slot),
@@ -2591,11 +2652,11 @@ test("compact header gaps open the native toolbar menu without replacing other c
     assert.equal(sidebar.listeners.get("contextmenu").length, 0);
 });
 
-test("compact controls follow customization and include pinned extensions after the field", () => {
+test("compact controls follow customization and include visible buttons before and after the field", () => {
     const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
     const attr = "floatingurlbar-compact-control";
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-ready"), true);
-    assert.equal(s.widget("downloads-button").hasAttribute(attr), false);
+    assert.equal(s.widget("downloads-button").hasAttribute(attr), true);
     s.widget("downloads-button").style.setProperty("color", "red");
     s.toolbarOrder(["downloads-button", "fixture-browser-action", "back-button", "forward-button",
         "stop-reload-button", "urlbar-container"]);
@@ -2604,30 +2665,40 @@ test("compact controls follow customization and include pinned extensions after 
     assert.equal(s.widget("downloads-button").style.getPropertyValue("--floatingurlbar-compact-column"), "1");
     assert.equal(s.widget("fixture-browser-action").style.getPropertyValue("--floatingurlbar-compact-column"), "2");
     assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "116px");
+    // Buttons after the field (e.g. Downloads, Account, Tab Search) stay in the header too,
+    // while collapsed or removed buttons release their slot and keep inline styles intact.
+    s.toolbarOrder(["back-button", "forward-button", "stop-reload-button", "urlbar-container",
+        "downloads-button", "fixture-browser-action"]);
+    assert.equal(s.widget("downloads-button").hasAttribute(attr), true);
+    assert.equal(s.widget("downloads-button").style.getPropertyValue("--floatingurlbar-compact-column"), "0");
+    assert.equal(s.widget("downloads-button").style.getPropertyValue("--floatingurlbar-compact-row"), "1");
+    assert.equal(s.widget("fixture-browser-action").hasAttribute(attr), true);
+    assert.equal(s.widget("fixture-browser-action").style.getPropertyValue("--floatingurlbar-compact-column"), "1");
+    assert.equal(s.widget("fixture-browser-action").style.getPropertyValue("--floatingurlbar-compact-row"), "1");
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "116px");
+    s.widget("downloads-button").setAttribute("collapsed", "true");
     s.toolbarOrder(["back-button", "forward-button", "stop-reload-button", "urlbar-container",
         "downloads-button", "fixture-browser-action"]);
     assert.equal(s.widget("downloads-button").hasAttribute(attr), false);
     assert.equal(s.widget("downloads-button").style.getPropertyValue("--floatingurlbar-compact-column"), "");
     assert.equal(s.widget("downloads-button").style.getPropertyValue("color"), "red");
-    assert.equal(s.widget("fixture-browser-action").hasAttribute(attr), true);
     assert.equal(s.widget("fixture-browser-action").style.getPropertyValue("--floatingurlbar-compact-column"), "0");
-    assert.equal(s.widget("fixture-browser-action").style.getPropertyValue("--floatingurlbar-compact-row"), "1");
-    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "116px");
 });
 
 test("Extensions defaults to the left and honors a customized position before the field", () => {
     const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
     const attr = "floatingurlbar-compact-control";
     const button = s.widget("unified-extensions-button");
-    s.resizeSidebar(234);
+    s.resizeSidebar(270);
     s.toolbarOrder(["back-button", "forward-button", "stop-reload-button", "urlbar-container",
         "downloads-button", "fixture-browser-action", "unified-extensions-button"]);
     assert.equal(button.hasAttribute(attr), true);
     assert.equal(button.style.getPropertyValue("--floatingurlbar-compact-column"), "1");
     assert.equal(s.widget("back-button").style.getPropertyValue("--floatingurlbar-compact-column"), "2");
-    assert.equal(s.widget("downloads-button").hasAttribute(attr), false);
+    assert.equal(s.widget("downloads-button").hasAttribute(attr), true);
+    assert.equal(s.widget("downloads-button").style.getPropertyValue("--floatingurlbar-compact-column"), "5");
     assert.equal(s.widget("fixture-browser-action").hasAttribute(attr), true);
-    assert.equal(s.widget("fixture-browser-action").style.getPropertyValue("--floatingurlbar-compact-column"), "5");
+    assert.equal(s.widget("fixture-browser-action").style.getPropertyValue("--floatingurlbar-compact-column"), "6");
     s.toolbarOrder(["unified-extensions-button", "back-button", "forward-button",
         "stop-reload-button", "urlbar-container"]);
     assert.equal(button.style.getPropertyValue("--floatingurlbar-compact-column"), "1");
@@ -2724,4 +2795,107 @@ test("Preferences click listener is scoped to activation and detached on dismiss
     const other = setup({ pageURL: "about:profiles" });
     other.ctrlT();
     assert.equal(other.page.contentDocument.listeners.get("click"), undefined);
+});
+
+test("compact hover-reveal preference disables dwell reveal while keeping click and menubar access", () => {
+    const attr = "floatingurlbar-compact-reveal";
+    const s = setup({ compactControls: true, prefs: {
+        "uc.floatingurlbar.compact": true,
+        "uc.floatingurlbar.compact.hover-reveal": false
+    } });
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    // Hovering the top strip must not arm reveal when disabled.
+    s.toolbox.emit("mousemove", { clientX: 50, clientY: 1 });
+    s.advance(1000);
+    assert.equal(s.toolbox.hasAttribute(attr), false);
+    // Clicking the strip still reveals immediately and stays open until leave + grace.
+    s.toolbox.emit("mousedown", { target: s.widget("urlbar-container"), button: 0 });
+    assert.equal(s.toolbox.hasAttribute(attr), true);
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-press"), true);
+    s.window.emit("mouseup", {});
+    assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-press"), false);
+    assert.equal(s.toolbox.hasAttribute(attr), true);
+    s.toolbox.emit("mousemove", { clientX: 60, clientY: 10 });
+    assert.equal(s.toolbox.hasAttribute(attr), true);
+    s.toolbox.emit("mouseleave", { target: s.toolbox });
+    s.advance(300);
+    assert.equal(s.toolbox.hasAttribute(attr), false);
+    // Live toggling on enables hover reveal; toggling off cancels pending dwell and active reveal.
+    s.setPref("uc.floatingurlbar.compact.hover-reveal", true);
+    s.toolbox.emit("mousemove", { clientX: 50, clientY: 1 });
+    s.advance(100);
+    s.setPref("uc.floatingurlbar.compact.hover-reveal", false);
+    s.advance(200);
+    assert.equal(s.toolbox.hasAttribute(attr), false);
+    s.setPref("uc.floatingurlbar.compact.hover-reveal", true);
+    s.toolbox.emit("mousemove", { clientX: 55, clientY: 1 });
+    s.advance(200);
+    assert.equal(s.toolbox.hasAttribute(attr), true);
+    s.setPref("uc.floatingurlbar.compact.hover-reveal", false);
+    assert.equal(s.toolbox.hasAttribute(attr), false);
+    s.window.emit("unload");
+    assert.equal(s.preferenceObservers.get("uc.floatingurlbar.compact.hover-reveal").size, 0);
+});
+
+test("float-on-click centers field clicks immediately on mousedown while keeping icons, shortcuts and compact mode safe", () => {
+    const s = setup({ compactControls: true, prefs: {
+        "uc.floatingurlbar.compact": true,
+        "uc.floatingurlbar.float-on-click": true
+    } });
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    s.input.parentElement = { id: "input-box" };
+    s.gURLBar._inputContainer = { id: "input-container" };
+    const icon = { id: "identity-button" };
+    s.bar.contains = node => [s.input, s.input.parentElement, s.gURLBar._inputContainer, icon].includes(node);
+
+    // Automatic focus alone must not float.
+    s.input.focus();
+    assert.equal(s.active(), false);
+
+    // Left-pressing inside the field floats immediately on mousedown (preventing a
+    // resting toolbar/sidebar popup flash), suppresses sidebar expansion, keeps
+    // current-tab navigation, and Escape cancels back to the page.
+    for (const target of [s.input, s.input.parentElement, s.gURLBar._inputContainer]) {
+        s.page.focus();
+        const event = { target, button: 0, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; } };
+        s.window.emit("mousedown", event);
+        assert.equal(event.defaultPrevented, true);
+        assert.equal(event.stopped, true);
+        assert.equal(s.active(), true);
+        assert.equal(s.bar.hasAttribute("floatingurlbar-sidebar-editing"), false);
+        assert.equal(s.where({}), "current");
+        assert.equal(s.input.focusCalls > 0 && s.input.selectCalls > 0, true);
+        s.key("Escape");
+        assert.equal(s.active(), false);
+        assert.equal(s.page.focusCalls > 0, true);
+    }
+
+    // Non-field controls and right-clicks stay native and unblocked.
+    const iconEvent = { target: icon, button: 0, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; } };
+    s.window.emit("mousedown", iconEvent);
+    assert.equal(iconEvent.defaultPrevented, undefined);
+    assert.equal(s.active(), false);
+
+    const rightClick = { target: s.input, button: 2, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; } };
+    s.window.emit("mousedown", rightClick);
+    assert.equal(rightClick.defaultPrevented, undefined);
+    assert.equal(s.active(), false);
+
+    // Clicking inside an already-floating Ctrl+T flow keeps native editing and new-tab intent.
+    s.ctrlT();
+    const insideFloating = { target: s.input, button: 0, preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; } };
+    s.window.emit("mousedown", insideFloating);
+    assert.equal(insideFloating.defaultPrevented, undefined);
+    assert.equal(s.active(), true);
+    assert.equal(s.where({}), "tab");
+    s.key("Escape");
+
+    // Disabled master switch or readOnly bar ignores float-on-click.
+    s.gURLBar.readOnly = true;
+    s.window.emit("mousedown", { target: s.input, button: 0, preventDefault() {}, stopPropagation() {} });
+    assert.equal(s.active(), false);
+    s.gURLBar.readOnly = false;
+    s.setPref("uc.floatingurlbar.enabled", false);
+    s.window.emit("mousedown", { target: s.input, button: 0, preventDefault() {}, stopPropagation() {} });
+    assert.equal(s.active(), false);
 });

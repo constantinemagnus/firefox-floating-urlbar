@@ -58,6 +58,9 @@
     const PREF_ENABLED = "uc.floatingurlbar.enabled";
     const PREF_DEBUG = "uc.floatingurlbar.debug";
     const PREF_COMPACT = "uc.floatingurlbar.compact";
+    const PREF_COMPACT_HOVER_REVEAL = "uc.floatingurlbar.compact.hover-reveal";
+    const PREF_FLOAT_ON_CLICK = "uc.floatingurlbar.float-on-click";
+    const PREF_SIDEBAR_VISIBILITY = "sidebar.visibility";
 
     // Older versions of this script overrode browser.urlbar.openintab and kept a
     // backup here. Restore it once if a previous session left it behind.
@@ -183,6 +186,9 @@
     let floatingPreferencesDocument = null;
 
     const isEnabled = () => Services.prefs.getBoolPref(PREF_ENABLED, true);
+    const isCompactPrefEnabled = () => isEnabled() &&
+        Services.prefs.getBoolPref(PREF_COMPACT, false) &&
+        Services.prefs.getStringPref(PREF_SIDEBAR_VISIBILITY, "") !== "expand-on-hover";
 
     function shouldHandle() {
         return isEnabled() &&
@@ -403,6 +409,12 @@
         floatingPreferencesDocument?.addEventListener("click", onPreferencesClick);
     }
 
+    function isFieldTarget(target) {
+        return target === urlbarInput ||
+            target === gURLBar._inputContainer ||
+            target === urlbarInput.parentElement;
+    }
+
     function stopFloating() {
         floatingPreferencesDocument?.removeEventListener("click", onPreferencesClick);
         floatingPreferencesDocument = null;
@@ -562,41 +574,48 @@
         const accel = Services.appinfo.OS === "Darwin"
             ? event.metaKey && !event.ctrlKey
             : event.ctrlKey && !event.metaKey;
+        if (!accel || event.altKey || event.shiftKey ||
+            event.isComposing || event.keyCode === 229) {
+            return;
+        }
 
         // Latin layouts (including Dvorak and Colemak) match the typed letter, as
         // Firefox does; other scripts fall back to the physical key.
         const typed = event.key?.toLowerCase() ?? "";
         const shortcut = /^[a-z]$/.test(typed) ? typed
             : event.code === "KeyL" ? "l" : event.code === "KeyK" ? "k" : typed;
-        const separateSearchBar = document.getElementById("searchbar") || document.getElementById("searchbar-new");
-        const sidebar = document.getElementById("sidebar-container");
+        if ((shortcut !== "l" && shortcut !== "k") || !shouldHandle()) {
+            return;
+        }
+
+        const separateSearchBar = shortcut === "k"
+            ? (document.getElementById("searchbar") || document.getElementById("searchbar-new"))
+            : null;
+        const sidebar = separateSearchBar ? document.getElementById("sidebar-container") : null;
         // The CSS anchor exists only while the compact layout is actually displayed.
         const compactSearch = shortcut === "k" && separateSearchBar && sidebar &&
             typeof gURLBar.searchModeShortcut === "function" &&
             window.getComputedStyle(sidebar).anchorName === "--floatingurlbar-sidebar";
-        const searchInUrlbar = shortcut === "k" &&
-            (!separateSearchBar || compactSearch);
-
-        if (accel && !event.altKey && !event.shiftKey &&
-            !event.isComposing && event.keyCode !== 229 &&
-            (shortcut === "l" || searchInUrlbar) && shouldHandle()) {
-            endFlow();
-            startFloating();
-            if (compactSearch) {
-                event.preventDefault();
-                event.stopPropagation();
-                gURLBar.searchModeShortcut();
-            }
-            // A page may claim the shortcut, so Firefox never focuses the bar.
-            // Drop that session instead of leaving the bar marked as floating.
-            const session = editingSession;
-            setTimeout(() => {
-                if (session === editingSession && !urlbar.hasAttribute("focused") &&
-                    !urlbar.hasAttribute("open") && urlbarPopups.size === 0) {
-                    endFlow();
-                }
-            }, SHORTCUT_FOCUS_MS);
+        if (shortcut === "k" && separateSearchBar && !compactSearch) {
+            return;
         }
+
+        endFlow();
+        startFloating();
+        if (compactSearch) {
+            event.preventDefault();
+            event.stopPropagation();
+            gURLBar.searchModeShortcut();
+        }
+        // A page may claim the shortcut, so Firefox never focuses the bar.
+        // Drop that session instead of leaving the bar marked as floating.
+        const session = editingSession;
+        setTimeout(() => {
+            if (session === editingSession && !urlbar.hasAttribute("focused") &&
+                !urlbar.hasAttribute("open") && urlbarPopups.size === 0) {
+                endFlow();
+            }
+        }, SHORTCUT_FOCUS_MS);
     }, true);
 
     // A mouse-created tab may keep the input focused, so blur alone cannot
@@ -738,15 +757,29 @@
         if (inBar) {
             lastBarMouseDownAt = Date.now();
             // Native focus also arrives after mouse-created tabs and can linger
-            // after cancellation. Only a deliberate field click requests expansion.
-            const inField = event.target === urlbarInput ||
-                event.target === gURLBar._inputContainer || event.target === urlbarInput.parentElement;
-            const sidebar = document.getElementById("sidebar-container");
-            if (event.button === 0 && inField && !centeredAtMouseDown &&
-                Services.prefs.getBoolPref(PREF_COMPACT, false) &&
-                sidebar && window.getComputedStyle(sidebar).anchorName === "--floatingurlbar-sidebar" &&
-                Services.prefs.getStringPref("sidebar.visibility", "") !== "expand-on-hover") {
-                urlbar.setAttribute(SIDEBAR_EDIT_ATTR, "");
+            // after cancellation. Only a deliberate field click requests floating
+            // or compact sidebar expansion.
+            const inField = isFieldTarget(event.target);
+            const floatOnClick = Services.prefs.getBoolPref(PREF_FLOAT_ON_CLICK, false);
+            if (event.button === 0 && inField && !centeredAtMouseDown) {
+                if (floatOnClick && shouldHandle()) {
+                    // Float before Firefox's native mousedown opens the popup at
+                    // the resting toolbar/sidebar position, avoiding a flash/jump.
+                    event.preventDefault();
+                    event.stopPropagation();
+                    startFloating();
+                    if (typeof window.openLocation === "function") {
+                        window.openLocation(event);
+                    }
+                    urlbarInput.focus();
+                    urlbarInput.select();
+                } else {
+                    const sidebar = document.getElementById("sidebar-container");
+                    if (isCompactPrefEnabled() &&
+                        sidebar && window.getComputedStyle(sidebar).anchorName === "--floatingurlbar-sidebar") {
+                        urlbar.setAttribute(SIDEBAR_EDIT_ATTR, "");
+                    }
+                }
             }
         }
     }, true);
@@ -754,9 +787,7 @@
     // Empty sidebar backgrounds do not necessarily move native focus. Dismiss
     // after the click so tabs, sidebar controls and their menus act first.
     window.addEventListener("click", event => {
-        if (!isEnabled() || event.button !== 0 || event.defaultPrevented || urlbarPopups.size !== 0 ||
-            !Services.prefs.getBoolPref(PREF_COMPACT, false) ||
-            Services.prefs.getStringPref("sidebar.visibility", "") === "expand-on-hover" ||
+        if (!isCompactPrefEnabled() || event.button !== 0 || event.defaultPrevented || urlbarPopups.size !== 0 ||
             !(urlbar.hasAttribute(SIDEBAR_EDIT_ATTR) || urlbar.hasAttribute(ACTIVE_ATTR)) ||
             document.activeElement !== urlbarInput) {
             return;
@@ -913,7 +944,7 @@
         const nativeFocusAttr = "floatingurlbar-native-focus";
         const onToolbarKey = event => {
             if (event.type === "keyup" && event.key !== "Alt") return;
-            if (isEnabled() && Services.prefs.getBoolPref(PREF_COMPACT, false) &&
+            if (isCompactPrefEnabled() &&
                 (event.key === "F10" || (event.key === "Alt" && !event.ctrlKey && !event.metaKey))) {
                 toolbox.setAttribute(nativeFocusAttr, "");
                 // Firefox's native menu listener reads frame visibility without flushing styles.
@@ -989,13 +1020,7 @@
                     clearControls();
                     return;
                 }
-                if (!urlbar.contains(placeholder)) urlbar.appendChild(placeholder);
-                if (!compactLayoutActive()) {
-                    forgetReveal();
-                }
-                if (placeholder.textContent !== urlbarInput.placeholder) {
-                    placeholder.textContent = urlbarInput.placeholder;
-                }
+                const layoutActive = compactLayoutActive();
                 let next = new Set();
                 let afterField = false;
                 for (const node of target.children) {
@@ -1003,18 +1028,19 @@
                         afterField = true;
                         continue;
                     }
-                    // Include pinned extensions even at their default position after the field.
-                    if (afterField && node.id !== "unified-extensions-button" &&
-                        !node.classList?.contains("unified-extensions-item")) {
-                        continue;
-                    }
-                    if ((node.localName === "toolbarbutton" || node.id === "stop-reload-button" ||
-                        node.classList?.contains("unified-extensions-item")) &&
-                        window.getComputedStyle(node).display !== "none") {
-                        if (afterField && node.id === "unified-extensions-button") {
-                            next = new Set([node, ...next]);
-                        } else {
-                            next.add(node);
+                    // Include all visible single-icon toolbar buttons (before or after
+                    // the field); wide widgets such as zoom/edit controls stay on the
+                    // revealed toolbar.
+                    if (node.localName === "toolbarbutton" || node.id === "stop-reload-button" ||
+                        node.classList?.contains("unified-extensions-item")) {
+                        const nodeStyle = window.getComputedStyle(node);
+                        if (node.getAttribute("collapsed") !== "true" &&
+                            nodeStyle.display !== "none" && nodeStyle.visibility !== "collapse") {
+                            if (afterField && node.id === "unified-extensions-button") {
+                                next = new Set([node, ...next]);
+                            } else {
+                                next.add(node);
+                            }
                         }
                     }
                 }
@@ -1031,35 +1057,46 @@
                     ordered.splice(at, 0, overflowButton);
                     next = new Set(ordered);
                 }
-                for (const node of controls) {
-                    if (!next.has(node)) {
-                        releaseControl(node);
-                    }
-                }
+                // Batch all layout reads before mutating attributes or styles.
                 // Keep the native instance; narrow sidebars use the toolbar.
+                const sidebarWidth = sidebar.clientWidth;
                 let caption = null;
+                let captionRect = null;
                 if ((Services.appinfo.OS === "Linux" || Services.appinfo.OS === "WINNT") &&
                     document.documentElement.hasAttribute("customtitlebar")) {
                     caption = captions.find(node => node.querySelector(".titlebar-buttonbox") &&
                         window.getComputedStyle(node).display !== "none" &&
                         node.parentElement.getBoundingClientRect().height > 0);
-                    const width = caption?.querySelector(".titlebar-buttonbox").getBoundingClientRect().width;
-                    if (!(width > 0 && width + 16 <= sidebar.clientWidth)) {
+                    captionRect = caption?.querySelector(".titlebar-buttonbox").getBoundingClientRect() ?? null;
+                    if (!(captionRect?.width > 0 && captionRect.width + 16 <= sidebarWidth)) {
                         caption = null;
+                        captionRect = null;
+                    }
+                }
+                const captionOffset = caption ? Math.max(step, Math.ceil(captionRect.height) + 4) : 0;
+                const menubarHeight = menubar && menubar.getAttribute("collapsed") !== "true" &&
+                    (!menubar.hasAttribute("autohide") || menubar.getAttribute("autohide") === "false")
+                    ? Math.ceil(menubar.getBoundingClientRect().height) : 0;
+                const columns = Math.max(1, Math.floor((sidebarWidth - 12) / step));
+
+                if (!urlbar.contains(placeholder)) urlbar.appendChild(placeholder);
+                if (!layoutActive) {
+                    forgetReveal();
+                }
+                if (placeholder.textContent !== urlbarInput.placeholder) {
+                    placeholder.textContent = urlbarInput.placeholder;
+                }
+                for (const node of controls) {
+                    if (!next.has(node)) {
+                        releaseControl(node);
                     }
                 }
                 for (const node of captions) {
                     if (node === caption) node.setAttribute(captionAttr, "");
                     else node.removeAttribute(captionAttr);
                 }
-                const captionOffset = caption ? Math.max(step,
-                    Math.ceil(caption.querySelector(".titlebar-buttonbox").getBoundingClientRect().height) + 4) : 0;
                 setProperty(document.documentElement, captionOffsetProp, `${captionOffset}px`);
-                const menubarHeight = menubar && menubar.getAttribute("collapsed") !== "true" &&
-                    (!menubar.hasAttribute("autohide") || menubar.getAttribute("autohide") === "false")
-                    ? Math.ceil(menubar.getBoundingClientRect().height) : 0;
                 setProperty(document.documentElement, menubarHeightProp, `${menubarHeight}px`);
-                const columns = Math.max(1, Math.floor((sidebar.clientWidth - 12) / step));
                 let index = 1; // The permanent menu button occupies the first slot.
                 for (const node of next) {
                     node.setAttribute(controlAttr, "");
@@ -1076,7 +1113,7 @@
             // Native window dragging makes Firefox report a spurious pointer
             // leave, so pin the revealed toolbar from press until release.
             const pressAttr = "floatingurlbar-compact-press";
-            const pressIgnore = `#urlbar, [${controlAttr}], #PanelUI-menu-button, [${captionAttr}]`;
+            const pressIgnore = `#urlbar, [${controlAttr}], #PanelUI-menu-button, [${captionAttr}], #toolbar-menubar`;
             // A missed mouseup (released outside the window) would strand the
             // hold, so also drop it on the first movement with no button down.
             const onPressMove = event => {
@@ -1100,14 +1137,12 @@
             const onToolboxPress = event => {
                 stopDwell();
                 if (event.button !== 0 ||
-                    !compactEnabled() ||
+                    !compactLayoutActive() ||
                     event.target?.closest?.(pressIgnore)) {
                     return;
                 }
                 toolbox.setAttribute(pressAttr, "");
-                if (compactLayoutActive()) {
-                    toolbox.setAttribute(revealAttr, "");
-                }
+                toolbox.setAttribute(revealAttr, "");
                 window.addEventListener("mouseup", releaseToolboxPress, true);
                 window.addEventListener("blur", onWindowBlur, true);
                 window.addEventListener("mousemove", onPressMove, true);
@@ -1123,7 +1158,9 @@
             let forgetTimer = 0;
             let dwellX = null;
             let dwellY = null;
-            const compactEnabled = () => isEnabled() && Services.prefs.getBoolPref(PREF_COMPACT, false);
+            const compactEnabled = isCompactPrefEnabled;
+            const compactHoverRevealEnabled = () =>
+                Services.prefs.getBoolPref(PREF_COMPACT_HOVER_REVEAL, true);
             // The compact CSS anchors the sidebar only while its layout shows.
             const compactLayoutActive = () =>
                 compactEnabled() &&
@@ -1144,7 +1181,11 @@
             };
             // Handle header gaps before Firefox's sidebar context menu claims them.
             sidebar.addEventListener("contextmenu", onHeaderContextMenu, true);
-            // Read the trigger height instead of mirroring the CSS constant.
+            // Read the trigger geometry instead of mirroring the CSS constants.
+            const revealStripTop = () => {
+                const top = Number.parseFloat(document.documentElement.style.getPropertyValue(menubarHeightProp));
+                return Number.isFinite(top) && top > 0 ? top : 0;
+            };
             const revealStripHeight = () => {
                 const height = Number.parseFloat(window.getComputedStyle(toolbox, "::before")?.height);
                 return Number.isFinite(height) ? height : 3;
@@ -1177,9 +1218,11 @@
                     return;
                 }
                 // A held button is a press or drag, not a hover; the header and
-                // anything below the strip never arm the wait.
-                if (event.buttons || event.target?.closest?.(pressIgnore) ||
-                    !Number.isFinite(event.clientY) || event.clientY < 0 || event.clientY >= revealStripHeight()) {
+                // anything outside the reveal strip never arm the wait.
+                const stripTop = revealStripTop();
+                if (!compactHoverRevealEnabled() || event.buttons || event.target?.closest?.(pressIgnore) ||
+                    !Number.isFinite(event.clientY) || event.clientY < stripTop ||
+                    event.clientY >= stripTop + revealStripHeight()) {
                     stopDwell();
                     dwellX = dwellY = null;
                     return;
@@ -1193,7 +1236,7 @@
                 stopDwell();
                 dwellTimer = setTimeout(() => {
                     dwellTimer = 0;
-                    if (compactLayoutActive()) {
+                    if (compactLayoutActive() && compactHoverRevealEnabled()) {
                         toolbox.setAttribute(revealAttr, "");
                     }
                 }, DWELL_MS);
@@ -1238,15 +1281,29 @@
                 const box = node.querySelector(".titlebar-buttonbox");
                 if (box) sidebarObserver.observe(box);
             }
+            const onHoverRevealPref = () => {
+                if (!compactHoverRevealEnabled()) {
+                    if (toolbox.hasAttribute(pressAttr)) {
+                        stopDwell();
+                        dwellX = dwellY = null;
+                    } else {
+                        forgetReveal();
+                    }
+                }
+            };
             syncControls();
             Services.prefs.addObserver(PREF_ENABLED, syncControls);
             Services.prefs.addObserver(PREF_COMPACT, syncControls);
+            Services.prefs.addObserver(PREF_COMPACT_HOVER_REVEAL, onHoverRevealPref);
+            Services.prefs.addObserver(PREF_SIDEBAR_VISIBILITY, syncControls);
             toolbox.addEventListener("mousemove", onRevealMove, true);
             toolbox.addEventListener("mouseleave", onRevealLeave, true);
             window.addEventListener("blur", onRevealBlur, true);
             window.addEventListener("unload", () => {
                 Services.prefs.removeObserver(PREF_ENABLED, syncControls);
                 Services.prefs.removeObserver(PREF_COMPACT, syncControls);
+                Services.prefs.removeObserver(PREF_COMPACT_HOVER_REVEAL, onHoverRevealPref);
+                Services.prefs.removeObserver(PREF_SIDEBAR_VISIBILITY, syncControls);
                 widgetsObserver.disconnect();
                 sidebarObserver.disconnect();
                 placeholder.remove();
