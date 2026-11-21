@@ -414,15 +414,19 @@
                         #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-native-focus] #toolbar-menubar {
                             visibility: visible;
                         }
-                        #toolbar-menubar[autohide]:not([autohide="false"], [inactive="true"], [collapsed="true"]),
-                        #toolbar-menubar:not([autohide], [collapsed="true"]),
-                        #toolbar-menubar[autohide="false"]:not([collapsed="true"]) {
+                        #toolbar-menubar[autohide]:not([autohide="false"], [inactive="true"], [inactive=""], [collapsed="true"], [collapsed=""]),
+                        #toolbar-menubar:not([autohide], [collapsed="true"], [collapsed=""]),
+                        #toolbar-menubar[autohide="false"]:not([collapsed="true"], [collapsed=""]) {
                             position: relative;
                             z-index: 6;
                             visibility: visible;
                             background-color: var(--toolbox-background-color, var(--lwt-accent-color, Canvas)) !important;
                             color: var(--toolbox-text-color, var(--lwt-text-color, CanvasText)) !important;
                             box-shadow: 0 1px 0 var(--chrome-content-separator-color, currentColor) !important;
+                        }
+                        /* Keep relocated sidebar window controls hidden while a temporary menubar overlays the top row. */
+                        #toolbar-menubar[autohide]:not([autohide="false"], [inactive="true"], [inactive=""], [collapsed="true"], [collapsed=""]) ~ :is(#TabsToolbar, #nav-bar) > [floatingurlbar-compact-caption] {
+                            visibility: hidden;
                         }
                     }
                     #navigator-toolbox[floatingurlbar-compact-ready] #urlbar {

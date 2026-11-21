@@ -1092,8 +1092,13 @@
                 // Keep the native instance; narrow sidebars use the toolbar.
                 const sidebarWidth = sidebar.clientWidth;
                 const collapsedNavbarByUs = toolbox.hasAttribute(emptyNavbarAttr);
+                // Temporary F10/Alt menubars keep their own native window controls on the
+                // menubar's trailing edge so relocating them does not cover File/Edit.
+                const menubarAutohide = !!(menubar && menubar.hasAttribute("autohide") &&
+                    menubar.getAttribute("autohide") !== "false");
                 const visibleCaption = document.documentElement.hasAttribute("customtitlebar")
-                    ? captions.find(node => node.querySelector(".titlebar-buttonbox") &&
+                    ? captions.find(node => !(menubarAutohide && node.parentElement === menubar) &&
+                        node.querySelector(".titlebar-buttonbox") &&
                         window.getComputedStyle(node).display !== "none" &&
                         (node.parentElement.getBoundingClientRect().height > 0 ||
                             (collapsedNavbarByUs && node.parentElement.id === "nav-bar" &&
@@ -1123,8 +1128,7 @@
                 const hasTopbar = hasNavbarContent || hasExtraToolbar;
                 const emptyNavbar = hasTopbar && !hasNavbarContent;
                 const captionOffset = caption ? Math.max(step, Math.ceil(captionRect.height) + 4) : 0;
-                const menubarHeight = menubar && menubar.getAttribute("collapsed") !== "true" &&
-                    (!menubar.hasAttribute("autohide") || menubar.getAttribute("autohide") === "false")
+                const menubarHeight = menubar && !menubarAutohide && isVisibleControl(menubar)
                     ? Math.ceil(menubar.getBoundingClientRect().height) : 0;
                 const columns = Math.max(1, Math.floor((sidebarWidth - 12) / step));
 

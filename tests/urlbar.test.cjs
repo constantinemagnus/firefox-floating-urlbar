@@ -147,9 +147,11 @@ test("floating-state selector agrees with the stylesheet and the mock", () => {
     }
     // Centered input container height must follow --floatingurlbar-height so overrides stay aligned.
     assert.match(css, /> \.urlbar-input-container \{\s*height: var\(--floatingurlbar-height\) !important;/);
-    // F10/Alt menubar activation must expose only #toolbar-menubar, not the whole #navigator-toolbox.
+    // F10/Alt menubar activation must expose only #toolbar-menubar, not the whole #navigator-toolbox,
+    // and hide relocated sidebar captions so they cannot overlap File/Edit or peek below the menubar.
     assert.doesNotMatch(css, /#navigator-toolbox\[floatingurlbar-compact-ready\]:has\(\s*#toolbar-menubar/);
     assert.match(css, /#navigator-toolbox\[floatingurlbar-compact-ready\]\[floatingurlbar-native-focus\] #toolbar-menubar/);
+    assert.match(css, /#toolbar-menubar\[autohide\][^{]*~ :is\(#TabsToolbar, #nav-bar\) > \[floatingurlbar-compact-caption\] \{\s*visibility: hidden;/);
     const s = setup();
     for (const active of [false, true]) {
         for (const state of [null, "focused", "popover-open", "floatingurlbar-hold"]) {
@@ -2203,17 +2205,27 @@ test("permanent menubars reserve header space without shifting temporary menus",
     for (const platform of ["Linux", "WINNT"]) {
         const s = setup({ compactControls: true, nativeCaptions: true, platform,
             prefs: { "uc.floatingurlbar.compact": true } });
+        const attr = "floatingurlbar-compact-caption";
         const menu = s.widget("toolbar-menubar");
+        const menuCaption = s.widget("caption-toolbar-menubar");
+        const navCaption = s.widget("caption-nav-bar");
         menu.rect.height = 28.5;
         s.resizeSidebar(180);
         assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "29px");
         assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "141px");
         assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-header-height"), "181px");
+        assert.equal(menuCaption.hasAttribute(attr), true);
+        assert.equal(navCaption.hasAttribute(attr), false);
+        // Temporary F10/Alt menubar (autohide="true") must not relocate its own captions over File/Edit.
         menu.setAttribute("autohide", "true"); s.resizeSidebar(180);
         assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "0px");
         assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-input-top"), "112px");
+        assert.equal(menuCaption.hasAttribute(attr), false);
+        assert.equal(navCaption.hasAttribute(attr), true);
+        assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-has-topbar"), false);
         menu.setAttribute("autohide", "false"); s.resizeSidebar(180);
         assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "29px");
+        assert.equal(menuCaption.hasAttribute(attr), true);
         menu.setAttribute("collapsed", "true"); s.resizeSidebar(180);
         assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-menubar-height"), "0px");
         s.setPref("uc.floatingurlbar.compact", false);
