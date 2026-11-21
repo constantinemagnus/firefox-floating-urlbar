@@ -163,8 +163,8 @@ test("floating-state selector agrees with the stylesheet and the mock", () => {
 
 function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missingCommitAPI = false,
     fallbackResult = Promise.resolve({}), configureUrlbar, prefs = {}, anchorSupport = true, compactControls = false,
-    separateSearchBar = null, revealStripHeight = "3px", nativeCaptions = false, missingCaptionBox = false,
-    compactStep = "36px", compactInputHeight = "32px", platform = "Linux" } = {}) {
+    bookmarksToolbar = false, separateSearchBar = null, revealStripHeight = "3px", nativeCaptions = false,
+    missingCaptionBox = false, compactStep = "36px", compactInputHeight = "32px", platform = "Linux" } = {}) {
     class Element {
         constructor(id) {
             this.id = id;
@@ -256,9 +256,24 @@ function setup({ pageURL, zeroPrefix = false, legacy = false, loadResult, missin
     if (compactControls) {
         for (const id of ["sidebar-container", "nav-bar", "nav-bar-overflow-button", "nav-bar-customization-target", "urlbar-container",
             "back-button", "forward-button", "stop-reload-button", "downloads-button", "fixture-browser-action", "unified-extensions-button",
-            "widget-overflow-fixed-list", "print-button"]) {
+            "widget-overflow-fixed-list", "print-button", "PersonalToolbar", "personal-bookmarks", "PlacesToolbarItems", "import-button", "notifications-toolbar"]) {
             elements.set(id, new Element(id));
         }
+        elements.get("PersonalToolbar").localName = "toolbar";
+        elements.get("personal-bookmarks").localName = "toolbaritem";
+        elements.get("PlacesToolbarItems").localName = "scrollbox";
+        elements.get("personal-bookmarks").appendChild(elements.get("PlacesToolbarItems"));
+        elements.get("PersonalToolbar").appendChild(elements.get("import-button"));
+        elements.get("PersonalToolbar").appendChild(elements.get("personal-bookmarks"));
+        if (bookmarksToolbar) {
+            elements.get("PlacesToolbarItems").appendChild(new Element("fixture-bookmark"));
+        } else {
+            elements.get("PersonalToolbar").setAttribute("collapsed", "true");
+        }
+        elements.get("notifications-toolbar").localName = "toolbar";
+        elements.get("notifications-toolbar").rect = { width: 1000, height: 0 };
+        elements.get("navigator-toolbox").appendChild(elements.get("PersonalToolbar"));
+        elements.get("navigator-toolbox").appendChild(elements.get("notifications-toolbar"));
         elements.get("sidebar-container").clientWidth = 180;
         if (nativeCaptions) {
             document.documentElement.setAttribute("customtitlebar");
@@ -579,7 +594,7 @@ test("master switch starts with native shortcuts and disables compact interactio
 });
 
 test("live disable clears floating and compact state without losing typed text", () => {
-    const s = setup({ prefs: { "uc.floatingurlbar.compact": true }, compactControls: true, nativeCaptions: true });
+    const s = setup({ prefs: { "uc.floatingurlbar.compact": true }, compactControls: true, bookmarksToolbar: true, nativeCaptions: true });
     s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     s.ctrlT(); s.type("keep these edits");
     s.window.emit("popupshowing", { target: { anchorNode: s.input } });
@@ -1931,7 +1946,7 @@ test("compact menubar keys flush visibility before native handling, including he
 });
 
 test("compact toolbar presses pin its reveal until release or unload", () => {
-    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const s = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     const attr = "floatingurlbar-compact-press";
     const middle = s.widget("urlbar-container");
@@ -1961,7 +1976,7 @@ test("compact toolbar presses pin its reveal until release or unload", () => {
 });
 
 test("compact toolbar hold survives descendant blur and recovers a lost release", () => {
-    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const s = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     const attr = "floatingurlbar-compact-press";
     const middle = s.widget("urlbar-container");
@@ -1983,7 +1998,7 @@ test("compact toolbar hold survives descendant blur and recovers a lost release"
 
 test("compact toolbar presses ignore other buttons, the header, inactive layouts and the disabled preference", () => {
     const attr = "floatingurlbar-compact-press";
-    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const s = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     const middle = s.widget("urlbar-container");
     // Without the compact sidebar anchor (e.g. horizontal tabs or fullscreen), pressing does nothing.
     s.toolbox.emit("mousedown", { target: middle, button: 0 });
@@ -2002,7 +2017,7 @@ test("compact toolbar presses ignore other buttons, the header, inactive layouts
     s.toolbox.emit("mousemove", { target: menubarItem, clientX: 20, clientY: 1 });
     s.advance(200);
     assert.equal(s.toolbox.hasAttribute("floatingurlbar-compact-reveal"), false);
-    const off = setup({ compactControls: true });
+    const off = setup({ compactControls: true, bookmarksToolbar: true });
     off.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     off.toolbox.emit("mousedown", { target: off.widget("urlbar-container"), button: 0 });
     assert.equal(off.toolbox.hasAttribute(attr), false);
@@ -2010,7 +2025,7 @@ test("compact toolbar presses ignore other buttons, the header, inactive layouts
 
 test("compact strip reveals only after a stationary 200ms hover", () => {
     const attr = "floatingurlbar-compact-reveal";
-    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const s = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     s.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
     s.advance(199);
@@ -2018,19 +2033,27 @@ test("compact strip reveals only after a stationary 200ms hover", () => {
     s.advance(1);
     assert.equal(s.toolbox.hasAttribute(attr), true);
 
-    // A real move restarts the wait.
-    const moved = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    // Small hand tremor (<= 10px) keeps the dwell running; sweeping (> 10px) restarts it.
+    const tremor = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
+    tremor.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    tremor.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
+    tremor.advance(150);
+    tremor.toolbox.emit("mousemove", { clientX: 11, clientY: 1 });
+    tremor.advance(50);
+    assert.equal(tremor.toolbox.hasAttribute(attr), true);
+
+    const moved = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     moved.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     moved.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
     moved.advance(150);
-    moved.toolbox.emit("mousemove", { clientX: 9, clientY: 1 });
+    moved.toolbox.emit("mousemove", { clientX: 20, clientY: 1 });
     moved.advance(150);
     assert.equal(moved.toolbox.hasAttribute(attr), false);
     moved.advance(50);
     assert.equal(moved.toolbox.hasAttribute(attr), true);
 
     // Repeated identical coordinates are not movement.
-    const still = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const still = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     still.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     still.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
     still.advance(150);
@@ -2050,14 +2073,14 @@ test("compact strip reveals only after a stationary 200ms hover", () => {
     assert.equal(still.toolbox.hasAttribute(attr), true);
 
     // The preference alone is not the layout; without the compact anchor nothing arms.
-    const native = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const native = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     native.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
     native.advance(1000);
     assert.equal(native.toolbox.hasAttribute(attr), false);
 });
 
 test("compact mode skips layout work while off and supports live preference toggles", () => {
-    const s = setup({ compactControls: true });
+    const s = setup({ compactControls: true, bookmarksToolbar: true });
     const order = ["back-button", "forward-button", "stop-reload-button", "urlbar-container"];
     s.toolbarOrder(order);
     s.resizeSidebar(180);
@@ -2200,7 +2223,7 @@ test("permanent menubars reserve header space without shifting temporary menus",
 
 test("compact hover uses the CSS strip height in restored and scaled layouts", () => {
     for (const height of [3, 12]) {
-        const s = setup({ compactControls: true, revealStripHeight: `${height}px`,
+        const s = setup({ compactControls: true, bookmarksToolbar: true, revealStripHeight: `${height}px`,
             prefs: { "uc.floatingurlbar.compact": true } });
         const attr = "floatingurlbar-compact-reveal";
         s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
@@ -2216,7 +2239,7 @@ test("compact hover uses the CSS strip height in restored and scaled layouts", (
         assert.equal(s.toolbox.hasAttribute(attr), false);
     }
     // With a permanent menubar, the reveal strip shifts directly below it.
-    const withMenu = setup({ compactControls: true, nativeCaptions: true, revealStripHeight: "3px",
+    const withMenu = setup({ compactControls: true, bookmarksToolbar: true, nativeCaptions: true, revealStripHeight: "3px",
         prefs: { "uc.floatingurlbar.compact": true } });
     withMenu.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     withMenu.widget("toolbar-menubar").rect.height = 29;
@@ -2231,7 +2254,7 @@ test("compact hover uses the CSS strip height in restored and scaled layouts", (
 
 test("compact layout changes clear reveal and pending dwell without pointer movement", () => {
     const attr = "floatingurlbar-compact-reveal";
-    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const s = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     const sidebar = s.widget("sidebar-container");
     sidebar.style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     s.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
@@ -2268,7 +2291,7 @@ test("compact layout changes clear reveal and pending dwell without pointer move
 
 test("compact strip reveals wait for leaving, pressing, the header and a disabled layout", () => {
     const attr = "floatingurlbar-compact-reveal";
-    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const s = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     s.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
     s.toolbox.emit("mouseleave", {});
@@ -2300,14 +2323,14 @@ test("compact strip reveals wait for leaving, pressing, the header and a disable
     s.advance(1000);
     assert.equal(s.toolbox.hasAttribute(attr), false);
 
-    const off = setup({ compactControls: true });
+    const off = setup({ compactControls: true, bookmarksToolbar: true });
     off.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
     off.advance(1000);
     assert.equal(off.toolbox.hasAttribute(attr), false);
 
     // Reaching the header with a stale reveal clears it, so the next strip
     // hover waits out the dwell again instead of reopening at once.
-    const stale = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const stale = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     stale.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     stale.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
     stale.advance(200);
@@ -2323,7 +2346,7 @@ test("compact strip reveals wait for leaving, pressing, the header and a disable
 
 test("compact strip stays open through the hide grace and cleans up on blur and unload", () => {
     const attr = "floatingurlbar-compact-reveal";
-    const s = setup({ compactControls: true, prefs: { "uc.floatingurlbar.compact": true } });
+    const s = setup({ compactControls: true, bookmarksToolbar: true, prefs: { "uc.floatingurlbar.compact": true } });
     s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
     s.toolbox.emit("mousemove", { clientX: 5, clientY: 1 });
     s.advance(200);
@@ -2799,7 +2822,7 @@ test("Preferences click listener is scoped to activation and detached on dismiss
 
 test("compact hover-reveal preference disables dwell reveal while keeping click and menubar access", () => {
     const attr = "floatingurlbar-compact-reveal";
-    const s = setup({ compactControls: true, prefs: {
+    const s = setup({ compactControls: true, bookmarksToolbar: true, prefs: {
         "uc.floatingurlbar.compact": true,
         "uc.floatingurlbar.compact.hover-reveal": false
     } });
@@ -2898,4 +2921,93 @@ test("float-on-click centers field clicks immediately on mousedown while keeping
     s.setPref("uc.floatingurlbar.enabled", false);
     s.window.emit("mousedown", { target: s.input, button: 0, preventDefault() {}, stopPropagation() {} });
     assert.equal(s.active(), false);
+});
+
+test("compact top-bar reveal suppresses empty toolbars and activates only when content remains", () => {
+    const hasTopbar = "floatingurlbar-compact-has-topbar";
+    const reveal = "floatingurlbar-compact-reveal";
+    const press = "floatingurlbar-compact-press";
+
+    // Default Linux compact layout with captions in the sidebar, collapsed bookmarks
+    // toolbar, and Firefox's empty zero-height #notifications-toolbar stays suppressed.
+    const s = setup({ compactControls: true, nativeCaptions: true, prefs: { "uc.floatingurlbar.compact": true } });
+    s.widget("sidebar-container").style.setProperty("anchor-name", "--floatingurlbar-sidebar");
+    // Flexible spacers do not count as top-bar content.
+    const spring = { id: "vertical-spacer", localName: "toolbarspring", getAttribute: () => null, hasAttribute: () => false };
+    s.widget("nav-bar-customization-target").children.push(spring);
+    s.resizeSidebar(180);
+    assert.equal(s.toolbox.hasAttribute(hasTopbar), false);
+    s.toolbox.emit("mousemove", { clientX: 50, clientY: 1 });
+    s.advance(1000);
+    assert.equal(s.toolbox.hasAttribute(reveal), false);
+    s.toolbox.emit("mousedown", { target: s.widget("urlbar-container"), button: 0 });
+    assert.equal(s.toolbox.hasAttribute(press), false);
+
+    // An active notification bar inside #notifications-toolbar (height > 0) activates reveal.
+    s.widget("notifications-toolbar").rect.height = 36;
+    s.resizeSidebar(180);
+    assert.equal(s.toolbox.hasAttribute(hasTopbar), true);
+    s.widget("notifications-toolbar").rect.height = 0;
+    s.resizeSidebar(180);
+    assert.equal(s.toolbox.hasAttribute(hasTopbar), false);
+
+    // An uncollapsed Bookmarks Toolbar containing only Firefox's #import-button (zero bookmarks)
+    // stays suppressed; adding an actual bookmark activates top-bar reveal and collapses empty #nav-bar.
+    const emptyNavbar = "floatingurlbar-compact-empty-navbar";
+    assert.equal(s.toolbox.hasAttribute(emptyNavbar), false);
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-sidebar-width"), "180px");
+    s.widget("PersonalToolbar").removeAttribute("collapsed");
+    s.resizeSidebar(180);
+    assert.equal(s.toolbox.hasAttribute(hasTopbar), false);
+    assert.equal(s.toolbox.hasAttribute(emptyNavbar), false);
+    const bookmark = { id: "fixture-bookmark", localName: "toolbarbutton", getAttribute: () => null, hasAttribute: () => false,
+        style: { getPropertyValue: () => "" } };
+    s.widget("PlacesToolbarItems").children.push(bookmark);
+    s.resizeSidebar(180);
+    assert.equal(s.toolbox.hasAttribute(hasTopbar), true);
+    assert.equal(s.toolbox.hasAttribute(emptyNavbar), true);
+    s.widget("nav-bar").rect.height = 0;
+    s.resizeSidebar(180);
+    assert.equal(s.widget("caption-nav-bar").hasAttribute("floatingurlbar-compact-caption"), true);
+    assert.equal(s.toolbox.hasAttribute(emptyNavbar), true);
+    s.widget("nav-bar").rect.height = 40;
+    s.toolbox.emit("mousedown", { target: s.widget("urlbar-container"), button: 0 });
+    assert.equal(s.toolbox.hasAttribute(reveal), true);
+    assert.equal(s.toolbox.hasAttribute(press), true);
+    // Firefox's toggleAttribute("collapsed", true) uses an empty string value.
+    s.widget("PersonalToolbar").setAttribute("collapsed", "");
+    s.resizeSidebar(180);
+    assert.equal(s.toolbox.hasAttribute(hasTopbar), false);
+    assert.equal(s.toolbox.hasAttribute(emptyNavbar), false);
+    assert.equal(s.toolbox.hasAttribute(reveal), false);
+    assert.equal(s.toolbox.hasAttribute(press), false);
+    s.widget("PlacesToolbarItems").children.pop();
+
+    // A narrow sidebar falls back captions to the top bar, activating reveal without collapsing #nav-bar.
+    s.resizeSidebar(100);
+    assert.equal(s.toolbox.hasAttribute(hasTopbar), true);
+    assert.equal(s.toolbox.hasAttribute(emptyNavbar), false);
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-sidebar-width"), "100px");
+    s.resizeSidebar(180);
+    assert.equal(s.toolbox.hasAttribute(hasTopbar), false);
+
+    // An un-relocated wide widget (e.g. zoom-controls) activates top-bar reveal without collapsing #nav-bar.
+    const zoom = { id: "zoom-controls", localName: "toolbaritem", getAttribute: () => null, hasAttribute: () => false,
+        style: { getPropertyValue: () => "" } };
+    s.widget("nav-bar-customization-target").children.push(zoom);
+    s.resizeSidebar(180);
+    assert.equal(s.toolbox.hasAttribute(hasTopbar), true);
+    assert.equal(s.toolbox.hasAttribute(emptyNavbar), false);
+    s.widget("nav-bar-customization-target").children.pop();
+    s.resizeSidebar(180);
+    assert.equal(s.toolbox.hasAttribute(hasTopbar), false);
+
+    // macOS keeps native captions on the top bar, so has-topbar stays active and #nav-bar stays uncollapsed.
+    const mac = setup({ compactControls: true, nativeCaptions: true, platform: "Darwin",
+        prefs: { "uc.floatingurlbar.compact": true } });
+    assert.equal(mac.toolbox.hasAttribute(hasTopbar), true);
+    assert.equal(mac.toolbox.hasAttribute(emptyNavbar), false);
+    s.window.emit("unload");
+    assert.equal(s.toolbox.hasAttribute(emptyNavbar), false);
+    assert.equal(s.root.style.getPropertyValue("--floatingurlbar-compact-sidebar-width"), "");
 });

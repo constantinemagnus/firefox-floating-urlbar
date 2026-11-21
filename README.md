@@ -1,6 +1,6 @@
-# Firefox Floating URL Bar & Compact Mode
+# Firefox Floating URL Bar
 
-A Zen-style floating URL bar for Firefox, with an optional compact vertical-tab layout.
+A Zen-style floating URL bar for Firefox, with an optional compact vertical-tab mode.
 
 - **Ctrl+T** opens a centered URL bar and opens the result in a new tab.
 - **Ctrl+L** opens the same bar to navigate in the current tab.
@@ -164,7 +164,7 @@ Create any of these as **Boolean** preferences in `about:config`:
 | `uc.floatingurlbar.dim` | `true` | Dim the page behind the floating URL bar |
 | `uc.floatingurlbar.glass` | `false` | Experimental translucent appearance |
 | `uc.floatingurlbar.compact` | `false` | Move the address field and buttons above vertical tabs |
-| `uc.floatingurlbar.compact.hover-reveal` | `true` | Reveal the hidden top toolbar by hovering the top edge in compact mode (clicking the top edge and F10/Alt still work when `false`) |
+| `uc.floatingurlbar.compact.hover-reveal` | `true` | Hover the top edge in compact mode to reveal the hidden top toolbar when content remains on it (clicking the top edge and F10/Alt still work when `false`) |
 | `uc.floatingurlbar.compact.pins.manual` | `false` | Use Firefox's native pinned-tab height and resize handle in compact mode |
 | `uc.floatingurlbar.debug` | `false` | Log events and hook state to the Browser Console (`Ctrl+Shift+J`) |
 
@@ -199,7 +199,7 @@ Set `uc.floatingurlbar.compact = true`, turn on **expanded vertical tabs** (left
 - **Header buttons:** Visible toolbar buttons, pinned extensions, and the overflow (`»`) menu automatically appear in the compact header. Use **Customize Toolbar** to reorder or remove buttons; wide widgets (such as zoom or edit controls) remain on the revealed top toolbar.
 - **Address field:** Click the sidebar address field to expand and edit in the current tab (or float centered if `uc.floatingurlbar.float-on-click` is enabled). `Ctrl+T`, `Ctrl+L`, and `Ctrl+K` always open the centered bar.
 - **Site controls:** Search engines, site info, permissions, and sharing controls remain available from the centered bar.
-- **Top toolbar:** Hold the pointer still at the top edge to reveal the normal toolbar, or click the top edge to reveal immediately. Set `uc.floatingurlbar.compact.hover-reveal = false` if you want click-only reveal (helpful on multi-monitor setups).
+- **Top toolbar:** Stays inactive with no hover trigger when nothing remains on it. When a populated Bookmarks Toolbar, wide widgets, or top window controls (such as on macOS or narrow sidebars) are present, rest the pointer at the top edge (or click it) to reveal the toolbar. Set `uc.floatingurlbar.compact.hover-reveal = false` for click-only reveal.
 - **Window dragging & menubar:** Drag empty header, toolbar, or vertical-tab space. Press `F10` or `Alt` to access the native menubar on Windows/Linux.
 - **Pinned tabs:** Rows fit their contents automatically. Set `uc.floatingurlbar.compact.pins.manual = true` to restore Firefox's manual resize handle.
 

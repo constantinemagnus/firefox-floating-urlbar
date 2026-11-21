@@ -60,9 +60,12 @@
 
             /* NORMAL / DEFAULT POSITION */
             --floatingurlbar-height: var(--urlbar-height);
+            --floatingurlbar-top: calc(
+                anchor(top) +
+                (anchor-size(height) - var(--floatingurlbar-height)) / 2
+            );
             --floatingurlbar-left: anchor(left);
             --floatingurlbar-width: 100cqi;
-            --floatingurlbar-margin-top: 0px;
             /* Use the painted input height for concentric popup corners. */
             --urlbar-background-border-top-radius-open: calc(
                 min(var(--urlbar-background-border-radius), var(--floatingurlbar-height) / 2) +
@@ -84,17 +87,12 @@
 
             inset: auto !important;
 
-            top: calc(
-                anchor(top) +
-                (anchor-size(height) - var(--floatingurlbar-height)) / 2
-            ) !important;
-
+            top: var(--floatingurlbar-top) !important;
             left: var(--floatingurlbar-left) !important;
             width: var(--floatingurlbar-width) !important;
             height: var(--floatingurlbar-height) !important;
 
             margin: 0 !important;
-            margin-top: var(--floatingurlbar-margin-top) !important;
 
             transition: none !important;
         }
@@ -125,11 +123,11 @@
             );
 
             --floatingurlbar-height: 50px;
+            --floatingurlbar-top: 20vh;
             --floatingurlbar-width: var(--floatingurlbar-center-width);
             --floatingurlbar-left: calc(
                 (100vw - var(--floatingurlbar-center-width)) / 2
             );
-            --floatingurlbar-margin-top: 20vh;
         }
 
         /* Menus blur the input and close suggestions. Keep Firefox's focused
@@ -151,8 +149,7 @@
             .urlbar-background
         ) {
             top: calc(
-                anchor(top) +
-                (anchor-size(height) - var(--floatingurlbar-height)) / 2 -
+                var(--floatingurlbar-top) -
                 var(--urlbar-background-overhang-open, 8px)
             ) !important;
 
@@ -363,32 +360,51 @@
                     #navigator-toolbox[floatingurlbar-compact-ready] > .browser-titlebar {
                         -moz-window-dragging: var(--floatingurlbar-toolbox-dragging) !important;
                     }
-                    #navigator-toolbox[floatingurlbar-compact-ready]::before {
+                    #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-has-topbar]::before {
                         content: "";
                         position: fixed;
                         top: var(--floatingurlbar-compact-menubar-height, 0px);
                         left: 0;
                         right: 0;
-                        height: 3px;
+                        height: 4px;
                         visibility: visible;
                         pointer-events: auto;
                     }
                     /* A restored window has no screen-edge stop to help reach a narrow strip. */
-                    &[sizemode="normal"] #navigator-toolbox[floatingurlbar-compact-ready]::before {
-                        height: 12px;
+                    &[sizemode="normal"] #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-has-topbar]::before {
+                        height: 8px;
+                    }
+                    /* Show a subtle edge cue only while touching the trigger strip. */
+                    #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-has-topbar]:not(
+                        [floatingurlbar-compact-reveal], [floatingurlbar-compact-press]
+                    ):hover:not(:has(
+                        :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button, [floatingurlbar-compact-caption], #toolbar-menubar):hover
+                    ))::before {
+                        background: linear-gradient(
+                            to right,
+                            transparent calc(50% - 36px),
+                            color-mix(in srgb, currentColor 45%, transparent) calc(50% - 32px),
+                            color-mix(in srgb, currentColor 45%, transparent) calc(50% + 32px),
+                            transparent calc(50% + 36px)
+                        );
+                        background-size: 100% 3px;
+                        background-repeat: no-repeat;
+                        background-position: top center;
                     }
                     /* The strip arms only after JS times a stationary hover, so
                      * brushing the edge cannot arm it; a press still opens at once. */
-                    #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-reveal]:hover:not(:has(
+                    #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-has-topbar][floatingurlbar-compact-reveal]:hover:not(:has(
                         :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button, [floatingurlbar-compact-caption], #toolbar-menubar):hover
                     )) {
                         --floatingurlbar-toolbox-dragging: drag;
                         visibility: visible;
                         transition: none !important;
                     }
-                    #navigator-toolbox[floatingurlbar-compact-ready]:has(toolbarbutton[open="true"]:not(#urlbar *)),
-                    #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-press],
-                    #mainPopupSet:has(> [panelopen]:not(#tab-preview-panel)) ~ #navigator-toolbox[floatingurlbar-compact-ready] {
+                    #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-has-topbar]:has(
+                        toolbarbutton[open="true"]:not(#urlbar *, [floatingurlbar-compact-control], [floatingurlbar-compact-control] *, #PanelUI-menu-button, #PanelUI-menu-button *),
+                        #search-container:focus-within
+                    ),
+                    #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-has-topbar][floatingurlbar-compact-press] {
                         --floatingurlbar-toolbox-dragging: drag;
                         visibility: visible;
                         transition: none !important;
@@ -419,13 +435,38 @@
                     #urlbar :is(panel, menupopup) {
                         pointer-events: auto;
                     }
+                    /* Collapse the empty #nav-bar row when only toolbars like Bookmarks Toolbar remain,
+                     * and keep Bookmarks Toolbar items clear of the sidebar header. */
+                    #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-empty-navbar] #nav-bar {
+                        min-height: 0 !important;
+                        height: 0 !important;
+                        padding-block: 0 !important;
+                        border-block: 0 !important;
+                        overflow: visible !important;
+                    }
+                    #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-empty-navbar] #nav-bar :is(#nav-bar-customization-target, #urlbar-container) {
+                        min-height: 0 !important;
+                        height: 0 !important;
+                        padding-block: 0 !important;
+                        margin-block: 0 !important;
+                    }
+                    #navigator-toolbox[floatingurlbar-compact-ready] #PersonalToolbar {
+                        padding-inline-start: calc(var(--floatingurlbar-compact-sidebar-width, 0px) + 8px) !important;
+                    }
+                    #navigator-toolbox[floatingurlbar-compact-ready] #PersonalToolbar #import-button {
+                        display: none !important;
+                    }
+                    &:has(#sidebar-container[sidebar-positionend]) #navigator-toolbox[floatingurlbar-compact-ready] #PersonalToolbar {
+                        padding-inline-start: var(--space-small, 8px) !important;
+                        padding-inline-end: calc(var(--floatingurlbar-compact-sidebar-width, 0px) + 8px) !important;
+                    }
                     /* The relocated input leaves the native URL-bar wrapper as an
                      * empty strip across the toolbar. Keep its window drag while
                      * the strip is hovered, and keep the moved field no-drag, so
                      * the hidden overlay never steals page drags. Reuse the reveal
                      * exclusion: hovering the permanent header must not expose the
                      * hidden strip's drag region. */
-                    #navigator-toolbox[floatingurlbar-compact-ready]:hover:not(:has(
+                    #navigator-toolbox[floatingurlbar-compact-ready][floatingurlbar-compact-has-topbar]:not([floatingurlbar-compact-empty-navbar]):hover:not(:has(
                         :is(#urlbar, [floatingurlbar-compact-control], #PanelUI-menu-button, [floatingurlbar-compact-caption], #toolbar-menubar):hover
                     )) :is(#urlbar-container, #urlbar) {
                         -moz-window-dragging: var(--floatingurlbar-toolbox-dragging) !important;
@@ -467,7 +508,6 @@
                         --floatingurlbar-height: var(--floatingurlbar-compact-input-height);
                         --floatingurlbar-width: calc(anchor-size(width) - 16px);
                         --floatingurlbar-left: calc(anchor(left) + 8px);
-                        --floatingurlbar-margin-top: 0px;
                     }
                     /* Automatic focus keeps the idle width. Deliberate field clicks
                      * and open suggestions expand it beside the sidebar. */
@@ -477,13 +517,13 @@
                     }
                     /* Engine selection stays in the centered bar. Keep long engine
                      * names out of both the idle and expanded sidebar field. */
-                    #urlbar:not([floatingurlbar-active]) .searchmode-switcher {
+                    #urlbar:not([floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold])) .searchmode-switcher {
                         display: none !important;
                     }
                     /* Keep the sidebar text's left edge steady, including on hover.
                      * Leave notification anchors native; centered editing restores
                      * the site-information and permission controls. */
-                    #urlbar:not([floatingurlbar-active]) :is(
+                    #urlbar:not([floatingurlbar-active]:is([focused], [popover-open], [floatingurlbar-hold])) :is(
                         #trust-icon-container, #tracking-protection-icon-container,
                         #identity-icon-box, #identity-permission-box
                     ) {
@@ -491,7 +531,7 @@
                     }
                     /* Reclaim right-side address space while idle. Popup
                      * tracking keeps controls and their anchors steady after blur. */
-                    #urlbar:not([floatingurlbar-active], [focused], [popover-open], [floatingurlbar-controls-open], :focus-within):not(:has(> .urlbar-input-container:hover)) {
+                    #urlbar:not([floatingurlbar-active][floatingurlbar-hold], [focused], [popover-open], [floatingurlbar-controls-open], :focus-within):not(:has(> .urlbar-input-container:hover)) {
                         #page-action-buttons > :is(
                             #star-button-box, #reader-mode-button, #picture-in-picture-button,
                             #split-view-button, #share-button, #pageActionButton, #urlbar-zoom-button,

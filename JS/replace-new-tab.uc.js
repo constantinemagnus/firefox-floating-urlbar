@@ -973,15 +973,42 @@
             placeholder.addEventListener("click", () => urlbarInput.focus());
             const controlAttr = "floatingurlbar-compact-control";
             const compactReadyAttr = "floatingurlbar-compact-ready";
+            const hasTopbarAttr = "floatingurlbar-compact-has-topbar";
+            const emptyNavbarAttr = "floatingurlbar-compact-empty-navbar";
             const columnProp = "--floatingurlbar-compact-column";
             const rowProp = "--floatingurlbar-compact-row";
             const inputTopProp = "--floatingurlbar-compact-input-top";
             const headerHeightProp = "--floatingurlbar-compact-header-height";
+            const sidebarWidthProp = "--floatingurlbar-compact-sidebar-width";
             const menubarHeightProp = "--floatingurlbar-compact-menubar-height";
             const menubar = document.getElementById("toolbar-menubar");
             const captionAttr = "floatingurlbar-compact-caption";
             const captionOffsetProp = "--floatingurlbar-compact-caption-offset";
             const captions = [...toolbox.querySelectorAll(".titlebar-buttonbox-container")];
+            const spacerTags = new Set(["toolbarspring", "toolbarspacer", "toolbarseparator"]);
+            const personalIgnoredIds = new Set(["personal-bookmarks", "personal-toolbar-empty", "import-button"]);
+            const isVisibleControl = node => {
+                if (!node || (node.hasAttribute("collapsed") && node.getAttribute("collapsed") !== "false")) {
+                    return false;
+                }
+                const nodeStyle = window.getComputedStyle(node);
+                return nodeStyle.display !== "none" && nodeStyle.visibility !== "collapse";
+            };
+            const hasPersonalToolbarContent = toolbar => {
+                if (!isVisibleControl(toolbar)) {
+                    return false;
+                }
+                const items = document.getElementById("PlacesToolbarItems");
+                if (items && toolbar.contains(items) && isVisibleControl(items) &&
+                    (items.children?.length ?? 0) > 0) {
+                    return true;
+                }
+                return [...(toolbar.children || [])].some(node =>
+                    node.localName !== "toolbartabstop" &&
+                    !spacerTags.has(node.localName) &&
+                    !personalIgnoredIds.has(node.id) &&
+                    isVisibleControl(node));
+            };
             let controls = new Set();
             const setProperty = (node, name, value) => {
                 if (node.style.getPropertyValue(name) !== value) {
@@ -998,9 +1025,12 @@
                 controls.clear();
                 document.documentElement.style.removeProperty(inputTopProp);
                 document.documentElement.style.removeProperty(headerHeightProp);
+                document.documentElement.style.removeProperty(sidebarWidthProp);
                 document.documentElement.style.removeProperty(menubarHeightProp);
                 document.documentElement.style.removeProperty(captionOffsetProp);
                 for (const node of captions) node.removeAttribute(captionAttr);
+                toolbox.removeAttribute(hasTopbarAttr);
+                toolbox.removeAttribute(emptyNavbarAttr);
                 toolbox.removeAttribute(compactReadyAttr);
             };
             const syncControls = () => {
@@ -1023,6 +1053,7 @@
                 const layoutActive = compactLayoutActive();
                 let next = new Set();
                 let afterField = false;
+                let hasUnrelocatedWidget = false;
                 for (const node of target.children) {
                     if (node === container) {
                         afterField = true;
@@ -1033,15 +1064,15 @@
                     // revealed toolbar.
                     if (node.localName === "toolbarbutton" || node.id === "stop-reload-button" ||
                         node.classList?.contains("unified-extensions-item")) {
-                        const nodeStyle = window.getComputedStyle(node);
-                        if (node.getAttribute("collapsed") !== "true" &&
-                            nodeStyle.display !== "none" && nodeStyle.visibility !== "collapse") {
+                        if (isVisibleControl(node)) {
                             if (afterField && node.id === "unified-extensions-button") {
                                 next = new Set([node, ...next]);
                             } else {
                                 next.add(node);
                             }
                         }
+                    } else if (!spacerTags.has(node.localName) && isVisibleControl(node)) {
+                        hasUnrelocatedWidget = true;
                     }
                 }
                 // The overflow button sits beside the target in #nav-bar and cannot be
@@ -1060,19 +1091,37 @@
                 // Batch all layout reads before mutating attributes or styles.
                 // Keep the native instance; narrow sidebars use the toolbar.
                 const sidebarWidth = sidebar.clientWidth;
+                const collapsedNavbarByUs = toolbox.hasAttribute(emptyNavbarAttr);
+                const visibleCaption = document.documentElement.hasAttribute("customtitlebar")
+                    ? captions.find(node => node.querySelector(".titlebar-buttonbox") &&
+                        window.getComputedStyle(node).display !== "none" &&
+                        (node.parentElement.getBoundingClientRect().height > 0 ||
+                            (collapsedNavbarByUs && node.parentElement.id === "nav-bar" &&
+                                isVisibleControl(node.parentElement)))) ?? null
+                    : null;
                 let caption = null;
                 let captionRect = null;
-                if ((Services.appinfo.OS === "Linux" || Services.appinfo.OS === "WINNT") &&
-                    document.documentElement.hasAttribute("customtitlebar")) {
-                    caption = captions.find(node => node.querySelector(".titlebar-buttonbox") &&
-                        window.getComputedStyle(node).display !== "none" &&
-                        node.parentElement.getBoundingClientRect().height > 0);
-                    captionRect = caption?.querySelector(".titlebar-buttonbox").getBoundingClientRect() ?? null;
+                if (visibleCaption && (Services.appinfo.OS === "Linux" || Services.appinfo.OS === "WINNT")) {
+                    caption = visibleCaption;
+                    captionRect = caption.querySelector(".titlebar-buttonbox").getBoundingClientRect();
                     if (!(captionRect?.width > 0 && captionRect.width + 16 <= sidebarWidth)) {
                         caption = null;
                         captionRect = null;
                     }
                 }
+                const personalToolbar = document.getElementById("PersonalToolbar");
+                const hasExtraToolbar = hasPersonalToolbarContent(personalToolbar) ||
+                    [...(toolbox.children || [])].some(node =>
+                        node.localName === "toolbar" &&
+                        node.id !== "toolbar-menubar" &&
+                        node.id !== "TabsToolbar" &&
+                        node.id !== "nav-bar" &&
+                        node !== personalToolbar &&
+                        isVisibleControl(node) &&
+                        (node.id !== "notifications-toolbar" || node.getBoundingClientRect().height > 0));
+                const hasNavbarContent = hasUnrelocatedWidget || (!!visibleCaption && !caption);
+                const hasTopbar = hasNavbarContent || hasExtraToolbar;
+                const emptyNavbar = hasTopbar && !hasNavbarContent;
                 const captionOffset = caption ? Math.max(step, Math.ceil(captionRect.height) + 4) : 0;
                 const menubarHeight = menubar && menubar.getAttribute("collapsed") !== "true" &&
                     (!menubar.hasAttribute("autohide") || menubar.getAttribute("autohide") === "false")
@@ -1080,8 +1129,11 @@
                 const columns = Math.max(1, Math.floor((sidebarWidth - 12) / step));
 
                 if (!urlbar.contains(placeholder)) urlbar.appendChild(placeholder);
-                if (!layoutActive) {
+                if (!layoutActive || !hasTopbar) {
                     forgetReveal();
+                }
+                if (!hasTopbar) {
+                    releaseToolboxPress();
                 }
                 if (placeholder.textContent !== urlbarInput.placeholder) {
                     placeholder.textContent = urlbarInput.placeholder;
@@ -1095,6 +1147,11 @@
                     if (node === caption) node.setAttribute(captionAttr, "");
                     else node.removeAttribute(captionAttr);
                 }
+                if (hasTopbar) toolbox.setAttribute(hasTopbarAttr, "");
+                else toolbox.removeAttribute(hasTopbarAttr);
+                if (emptyNavbar) toolbox.setAttribute(emptyNavbarAttr, "");
+                else toolbox.removeAttribute(emptyNavbarAttr);
+                setProperty(document.documentElement, sidebarWidthProp, `${sidebarWidth}px`);
                 setProperty(document.documentElement, captionOffsetProp, `${captionOffset}px`);
                 setProperty(document.documentElement, menubarHeightProp, `${menubarHeight}px`);
                 let index = 1; // The permanent menu button occupies the first slot.
@@ -1138,6 +1195,7 @@
                 stopDwell();
                 if (event.button !== 0 ||
                     !compactLayoutActive() ||
+                    !toolbox.hasAttribute(hasTopbarAttr) ||
                     event.target?.closest?.(pressIgnore)) {
                     return;
                 }
@@ -1152,6 +1210,7 @@
             // dwell; brushing past cannot arm it, a press still opens at once.
             const revealAttr = "floatingurlbar-compact-reveal";
             const DWELL_MS = 200;
+            const DWELL_RADIUS = 10;
             // Matches the CSS hide delay (transition: visibility 0s 300ms).
             const REVEAL_GRACE_MS = 300;
             let dwellTimer = 0;
@@ -1204,7 +1263,7 @@
             const onRevealMove = event => {
                 clearTimeout(forgetTimer);
                 forgetTimer = 0;
-                if (!compactLayoutActive()) {
+                if (!compactLayoutActive() || !toolbox.hasAttribute(hasTopbarAttr)) {
                     forgetReveal();
                     return;
                 }
@@ -1227,8 +1286,9 @@
                     dwellX = dwellY = null;
                     return;
                 }
-                // Only real movement restarts the wait; repeated coordinates do not.
-                if (event.clientX === dwellX && event.clientY === dwellY) {
+                // Tolerate small hand tremor within DWELL_RADIUS while resetting on sweeps.
+                if (dwellTimer && dwellX !== null && dwellY !== null &&
+                    Math.hypot(event.clientX - dwellX, event.clientY - dwellY) <= DWELL_RADIUS) {
                     return;
                 }
                 dwellX = event.clientX;
@@ -1236,7 +1296,8 @@
                 stopDwell();
                 dwellTimer = setTimeout(() => {
                     dwellTimer = 0;
-                    if (compactLayoutActive() && compactHoverRevealEnabled()) {
+                    if (compactLayoutActive() && compactHoverRevealEnabled() &&
+                        toolbox.hasAttribute(hasTopbarAttr)) {
                         toolbox.setAttribute(revealAttr, "");
                     }
                 }, DWELL_MS);
@@ -1271,12 +1332,18 @@
                 attributes: true, subtree: true,
                 attributeFilter: ["inactive", "autohide", "collapsed", "tabs-hidden", "overflowing", "nonemptyoverflow"]
             });
+            const personalToolbarNode = document.getElementById("PersonalToolbar");
+            if (personalToolbarNode) {
+                widgetsObserver.observe(personalToolbarNode, { childList: true, subtree: true });
+            }
             widgetsObserver.observe(document.documentElement, {
                 attributes: true, attributeFilter: ["customtitlebar", "sizemode", "customizing", "inDOMFullscreen"]
             });
             const sidebarObserver = new window.ResizeObserver(syncControls);
             sidebarObserver.observe(sidebar);
             if (menubar) sidebarObserver.observe(menubar);
+            const notificationsToolbar = document.getElementById("notifications-toolbar");
+            if (notificationsToolbar) sidebarObserver.observe(notificationsToolbar);
             for (const node of captions) {
                 const box = node.querySelector(".titlebar-buttonbox");
                 if (box) sidebarObserver.observe(box);
